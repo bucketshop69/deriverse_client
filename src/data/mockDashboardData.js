@@ -47,7 +47,8 @@ const SYMBOLS = [
 ]
 
 const ORDER_TYPES = ['Market', 'Limit']
-const TABLE_PAGE_SIZE = 50
+const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const HEATMAP_SLOTS = ['00-03', '04-07', '08-11', '12-15', '16-19', '20-23']
 
 function createSeededRng(seed) {
   let value = seed >>> 0
@@ -170,7 +171,14 @@ function buildTrades({ year, monthIndex, totalTrades, seed }) {
     trades.push(createTrade({ rng, index, year, monthIndex, monthStartMs, monthEndMs }))
   }
 
-  return trades.sort((a, b) => b.exitAt.getTime() - a.exitAt.getTime())
+  const sortedTrades = trades.sort((a, b) => b.exitAt.getTime() - a.exitAt.getTime())
+  const openCount = Math.max(3, Math.round(totalTrades * 0.08))
+
+  return sortedTrades.map((trade, index) => ({
+    ...trade,
+    status: index < openCount ? 'OPEN' : 'CLOSED',
+    annotation: index % 13 === 0 ? 'Scale entry and monitor fee impact before adding size.' : '',
+  }))
 }
 
 function buildChartData({ year, monthIndex, trades, startingEquity }) {
@@ -207,6 +215,90 @@ function buildChartData({ year, monthIndex, trades, startingEquity }) {
       `${monthShort} ${String(Math.ceil(daysInMonth / 2)).padStart(2, '0')}`,
       `${monthShort} ${String(daysInMonth).padStart(2, '0')}`,
     ],
+  }
+}
+
+function getSessionName(hour) {
+  if (hour < 8) {
+    return 'Asia'
+  }
+
+  if (hour < 16) {
+    return 'London'
+  }
+
+  return 'New York'
+}
+
+function buildAnalytics(trades) {
+  const sessionMap = {
+    Asia: { name: 'Asia', trades: 0, pnl: 0 },
+    London: { name: 'London', trades: 0, pnl: 0 },
+    'New York': { name: 'New York', trades: 0, pnl: 0 },
+  }
+
+  const weekdayPnl = WEEKDAY_SHORT.map((label) => ({ label, pnl: 0, trades: 0 }))
+  const heatmapValues = Array.from({ length: 7 }, () => Array.from({ length: HEATMAP_SLOTS.length }, () => 0))
+
+  for (const trade of trades) {
+    const hour = trade.exitAt.getUTCHours()
+    const day = trade.exitAt.getUTCDay()
+    const sessionName = getSessionName(hour)
+    const slot = Math.floor(hour / 4)
+
+    sessionMap[sessionName].trades += 1
+    sessionMap[sessionName].pnl += trade.pnl
+
+    weekdayPnl[day].pnl += trade.pnl
+    weekdayPnl[day].trades += 1
+
+    heatmapValues[day][slot] += 1
+  }
+
+  const sessions = Object.values(sessionMap)
+  const bestDay = weekdayPnl.reduce((best, current) => (current.pnl > best.pnl ? current : best), weekdayPnl[0])
+  const heatmapMax = heatmapValues.reduce(
+    (max, row) => Math.max(max, ...row),
+    1,
+  )
+
+  const streakSource = trades
+    .filter((trade) => trade.status === 'CLOSED')
+    .slice()
+    .sort((a, b) => a.exitAt.getTime() - b.exitAt.getTime())
+
+  let currentWin = 0
+  let currentLoss = 0
+  let maxWin = 0
+  let maxLoss = 0
+
+  for (const trade of streakSource) {
+    if (trade.pnl >= 0) {
+      currentWin += 1
+      currentLoss = 0
+      maxWin = Math.max(maxWin, currentWin)
+    } else {
+      currentLoss += 1
+      currentWin = 0
+      maxLoss = Math.max(maxLoss, currentLoss)
+    }
+  }
+
+  return {
+    sessions,
+    bestDay,
+    streaks: {
+      currentWin,
+      currentLoss,
+      maxWin,
+      maxLoss,
+    },
+    heatmap: {
+      dayLabels: WEEKDAY_SHORT,
+      slotLabels: HEATMAP_SLOTS,
+      values: heatmapValues,
+      maxValue: heatmapMax,
+    },
   }
 }
 
@@ -255,12 +347,18 @@ export function createDashboardMockData({ year = 2023, monthIndex = 9, totalTrad
   const trades = buildTrades({ year, monthIndex, totalTrades, seed })
   const summary = summarizeTrades({ trades, startingEquity })
   const chart = buildChartData({ year, monthIndex, trades, startingEquity })
+  const analytics = buildAnalytics(trades)
 
   return {
     periodLabel: `${monthShort} 1 - ${monthShort} ${daysInMonth}, ${year}`,
-    tierLabel: 'Intermediate',
+    modeLabel: 'Normal',
     symbolFilterLabel: 'All Symbols',
     chart,
+    analytics,
+    tools: {
+      chatgptUrl: 'https://chat.openai.com/',
+      claudeUrl: 'https://claude.ai/',
+    },
     stats: {
       netPnl: `${summary.netPnlPercent >= 0 ? '+' : ''}${summary.netPnlPercent.toFixed(1)}%`,
       winRate: `${summary.winRate.toFixed(1)}%`,
@@ -284,10 +382,7 @@ export function createDashboardMockData({ year = 2023, monthIndex = 9, totalTrad
     },
     table: {
       totalTrades: trades.length,
-      visibleTrades: trades.slice(0, TABLE_PAGE_SIZE),
-      page: 1,
-      pageSize: TABLE_PAGE_SIZE,
-      pageCount: Math.ceil(trades.length / TABLE_PAGE_SIZE),
+      trades,
     },
   }
 }
@@ -316,4 +411,8 @@ export function formatFee(value) {
 
 export function formatAth(value) {
   return formatUsd(value, 2)
+}
+
+export function formatCompactValue(value) {
+  return formatCompactUsd(value)
 }
