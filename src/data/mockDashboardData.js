@@ -532,9 +532,11 @@ function buildFeeTrend(trades) {
 
 function buildDailyChart({ trades, startDate, endDate, startingEquity }) {
   const pnlByDay = new Map()
+  const feeByDay = new Map()
   for (const trade of trades) {
     const key = getDayKey(trade.exitAt)
     pnlByDay.set(key, (pnlByDay.get(key) ?? 0) + trade.pnl)
+    feeByDay.set(key, (feeByDay.get(key) ?? 0) + trade.fee)
   }
 
   let equity = startingEquity
@@ -545,6 +547,7 @@ function buildDailyChart({ trades, startDate, endDate, startingEquity }) {
     const dayDate = new Date(dayMs)
     const dayKey = getDayKey(dayDate)
     const pnl = pnlByDay.get(dayKey) ?? 0
+    const fee = feeByDay.get(dayKey) ?? 0
     equity += pnl
     peak = Math.max(peak, equity)
     const cumulativePnl = equity - startingEquity
@@ -554,6 +557,7 @@ function buildDailyChart({ trades, startDate, endDate, startingEquity }) {
       lineValue: cumulativePnl,
       secondaryLineValue: equity,
       areaValue: peak - equity,
+      feeValue: fee,
     })
   }
 
@@ -561,6 +565,7 @@ function buildDailyChart({ trades, startDate, endDate, startingEquity }) {
     lineLegend: 'Cumulative PnL',
     secondLineLegend: 'Account Equity',
     areaLegend: 'Drawdown Overlay',
+    feeLegend: 'Daily Fees',
     points,
     xLabels: getXLabels(points),
     headlineLabel: 'ATH',
@@ -586,6 +591,7 @@ function buildSessionChart(trades) {
     label,
     lineValue: aggregates[label].pnl,
     areaValue: aggregates[label].fees,
+    feeValue: aggregates[label].fees,
   }))
   const best = points.reduce((winner, current) => (current.lineValue > winner.lineValue ? current : winner), points[0])
 
@@ -613,6 +619,7 @@ function buildHodChart(trades) {
     label: bucket.label,
     lineValue: bucket.pnl,
     areaValue: bucket.fees,
+    feeValue: bucket.fees,
   }))
   const best = points.reduce((winner, current) => (current.lineValue > winner.lineValue ? current : winner), points[0])
 

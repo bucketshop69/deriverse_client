@@ -19,6 +19,8 @@ const LINE_TOP = 10
 const LINE_BOTTOM = 160
 const AREA_TOP = 150
 const AREA_BOTTOM = 210
+const FEE_BAR_TOP = 176
+const FEE_BAR_BOTTOM = 210
 const NOTES_STORAGE_KEY = 'deriverse.notes.v1'
 const DAY_IN_MS = 24 * 60 * 60 * 1000
 const PERPS_BASE_ASSETS = new Set(['BTC', 'ETH', 'SOL'])
@@ -349,15 +351,19 @@ function App() {
   const [transferStatusFilter, setTransferStatusFilter] = useState('ALL')
   const [rangePreset, setRangePreset] = useState('ALL')
   const [accountScope, setAccountScope] = useState('ALL')
+  const [symbolFilter, setSymbolFilter] = useState('ALL')
   const [tableView, setTableView] = useState('POSITIONS')
   const [pageSize, setPageSize] = useState(10)
   const [page, setPage] = useState(1)
   const [chartView, setChartView] = useState('PERFORMANCE')
+  const [performanceView, setPerformanceView] = useState('DAILY')
   const [chartHoverIndex, setChartHoverIndex] = useState(null)
   const [heatmapHover, setHeatmapHover] = useState(null)
   const [impactHover, setImpactHover] = useState(null)
   const [impactActiveOnly, setImpactActiveOnly] = useState(false)
   const [isDepositModalOpen, setIsDepositModalOpen] = useState(false)
+  const [editingNoteTrade, setEditingNoteTrade] = useState(null)
+  const [editingNoteValue, setEditingNoteValue] = useState('')
   const [annotationMap, setAnnotationMap] = useState(() => {
     if (typeof window === 'undefined') {
       return {}
@@ -410,10 +416,11 @@ function App() {
     () =>
       filterTradesByScope({
         trades: baseDashboard.table.trades,
+        symbol: symbolFilter,
         startDate: rangeWindow.startDate,
         endDate: rangeWindow.endDate,
       }),
-    [baseDashboard.table.trades, rangeWindow.endDate, rangeWindow.startDate],
+    [baseDashboard.table.trades, rangeWindow.endDate, rangeWindow.startDate, symbolFilter],
   )
 
   const accountScopeTrades = useMemo(
@@ -445,11 +452,12 @@ function App() {
       previousRangeWindow
         ? filterTradesByScope({
           trades: baseDashboard.table.trades,
+          symbol: symbolFilter,
           startDate: previousRangeWindow.startDate,
           endDate: previousRangeWindow.endDate,
         })
         : [],
-    [baseDashboard.table.trades, previousRangeWindow],
+    [baseDashboard.table.trades, previousRangeWindow, symbolFilter],
   )
 
   const previousAccountScopeTrades = useMemo(
@@ -464,9 +472,9 @@ function App() {
         startingEquity: baseDashboard.startingEquity,
         startDateInput: rangeWindow.startInput,
         endDateInput: rangeWindow.endInput,
-        chartView,
+        chartView: chartView === 'PERFORMANCE' ? performanceView : chartView,
       }),
-    [baseDashboard.startingEquity, chartView, rangeWindow.endInput, rangeWindow.startInput, scopedTrades],
+    [baseDashboard.startingEquity, chartView, performanceView, rangeWindow.endInput, rangeWindow.startInput, scopedTrades],
   )
 
   const filteredPositions = useMemo(() => {
@@ -478,8 +486,11 @@ function App() {
   }, [scopedTrades, statusFilter])
 
   const scopedOrders = useMemo(
-    () => filterRecordsByDateRange(baseDashboard.table.orders, 'createdAt', rangeWindow.startDate, rangeWindow.endDate),
-    [baseDashboard.table.orders, rangeWindow.endDate, rangeWindow.startDate],
+    () =>
+      filterRecordsByDateRange(baseDashboard.table.orders, 'createdAt', rangeWindow.startDate, rangeWindow.endDate).filter(
+        (order) => symbolFilter === 'ALL' || order.symbol === symbolFilter,
+      ),
+    [baseDashboard.table.orders, rangeWindow.endDate, rangeWindow.startDate, symbolFilter],
   )
   const filteredOrders = useMemo(() => {
     if (orderStatusFilter === 'ALL') {
@@ -532,6 +543,9 @@ function App() {
   const lineValues = dashboard.chart.points.map((point) => point.lineValue)
   const lineMin = lineValues.length > 0 ? Math.min(...lineValues) : 0
   const lineMax = lineValues.length > 0 ? Math.max(...lineValues) : 0
+  const feeValues = dashboard.chart.points.map((point) => (Number.isFinite(point.feeValue) ? point.feeValue : 0))
+  const feeMax = feeValues.length > 0 ? Math.max(...feeValues) : 0
+  const showDailyFeeBars = chartView === 'PERFORMANCE' && performanceView === 'DAILY' && feeMax > 0
   const hoveredChartPoint = !isNonChartView && chartHoverIndex !== null ? dashboard.chart.points[chartHoverIndex] : null
   const hoverXPercent = hoveredChartPoint
     ? (chartHoverIndex / Math.max(dashboard.chart.points.length - 1, 1)) * 100
@@ -544,6 +558,7 @@ function App() {
   const visibleEnd = activeRows.length === 0 ? 0 : visibleStart + paginatedRows.length - 1
   const activeScopedCount = tableView === 'ORDERS' ? scopedOrders.length : tableView === 'TRANSFERS' ? scopedTransfers.length : scopedTrades.length
   const activeStatusFilter = tableView === 'ORDERS' ? orderStatusFilter : tableView === 'TRANSFERS' ? transferStatusFilter : statusFilter
+  const selectableSymbols = useMemo(() => ['ALL', ...baseDashboard.availableSymbols], [baseDashboard.availableSymbols])
 
   const accountScopeSummary = useMemo(
     () => buildScopeSummary({ trades: accountScopeTrades, startingEquity: baseDashboard.startingEquity }),
@@ -718,12 +733,6 @@ function App() {
       valueClass: 'text-white',
       delta: null,
     },
-    {
-      label: 'Max Win/Loss',
-      value: `${formatCompactValue(accountScopeSummary.maxWin)} / -${formatCompactValue(Math.abs(accountScopeSummary.maxLoss))}`,
-      valueClass: 'text-white',
-      delta: null,
-    },
   ]
   const scopeMatrixItems = [
     { label: 'Spot PnL Share', value: `${accountScopeSummary.spotContributionPercent.toFixed(1)}%`, valueClass: 'text-white' },
@@ -837,6 +846,26 @@ function App() {
       recentOutcomes,
     }
   }, [scopedTrades])
+  const orderTypePerformance = useMemo(() => {
+    const byType = (type) => {
+      const source = scopedTrades.filter((trade) => trade.type.toUpperCase() === type.toUpperCase())
+      const trades = source.length
+      const winners = source.filter((trade) => trade.pnl > 0).length
+      const totalPnl = source.reduce((sum, trade) => sum + trade.pnl, 0)
+      const totalFees = source.reduce((sum, trade) => sum + trade.fee, 0)
+
+      return {
+        label: type === 'Market' ? 'Market' : 'Limit',
+        trades,
+        winRate: trades > 0 ? (winners / trades) * 100 : 0,
+        avgPnl: trades > 0 ? totalPnl / trades : 0,
+        totalPnl,
+        avgFee: trades > 0 ? totalFees / trades : 0,
+      }
+    }
+
+    return [byType('Market'), byType('Limit')]
+  }, [scopedTrades])
 
   const impactSourceTrades = useMemo(
     () => (impactActiveOnly ? scopedTrades.filter((trade) => trade.status === 'OPEN') : scopedTrades),
@@ -896,23 +925,35 @@ function App() {
 
   function handleEditNote(trade) {
     const existing = annotationMap[trade.id] ?? trade.annotation ?? ''
-    const nextValue = window.prompt(`Edit note for ${trade.symbol}`, existing)
-    if (nextValue === null) {
+    setEditingNoteTrade(trade)
+    setEditingNoteValue(existing)
+  }
+
+  function handleSaveNoteEdit() {
+    if (!editingNoteTrade) {
       return
     }
 
-    const trimmed = nextValue.trim()
+    const trimmed = editingNoteValue.trim()
     setAnnotationMap((current) => {
       const next = { ...current }
 
       if (trimmed.length === 0) {
-        delete next[trade.id]
+        delete next[editingNoteTrade.id]
       } else {
-        next[trade.id] = trimmed
+        next[editingNoteTrade.id] = trimmed
       }
 
       return next
     })
+
+    setEditingNoteTrade(null)
+    setEditingNoteValue('')
+  }
+
+  function handleCloseNoteEditor() {
+    setEditingNoteTrade(null)
+    setEditingNoteValue('')
   }
 
   function handleChartMouseMove(event) {
@@ -1104,6 +1145,60 @@ function App() {
         onClose={() => setIsDepositModalOpen(false)}
         publicKey={publicKey}
       />
+      {editingNoteTrade && (
+        <div className="fixed inset-0 z-[65] flex items-center justify-center bg-black/65 px-4">
+          <div className="w-full max-w-[560px] border border-panel-border bg-background-dark p-4 shadow-[0_20px_70px_rgba(0,0,0,0.45)]">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-secondary-text">Position Note</p>
+                <p className="mono text-sm font-bold text-white">{editingNoteTrade.symbol}</p>
+              </div>
+              <button
+                className="h-8 w-8 border border-panel-border bg-neutral-dark/40 text-lg leading-none text-secondary-text hover:text-white"
+                onClick={handleCloseNoteEditor}
+                type="button"
+              >
+                x
+              </button>
+            </div>
+
+            <div className="mt-3">
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-secondary-text" htmlFor="position-note-editor">
+                Notes
+              </label>
+              <textarea
+                className="thin-scrollbar h-32 w-full resize-none border border-panel-border bg-background-dark px-3 py-2 text-sm text-white outline-none placeholder:text-secondary-text/70"
+                id="position-note-editor"
+                maxLength={500}
+                onChange={(event) => setEditingNoteValue(event.target.value)}
+                placeholder="Add context for this position..."
+                value={editingNoteValue}
+              />
+              <div className="mt-1 flex items-center justify-between text-[10px] text-secondary-text">
+                <span>Leave empty to remove note</span>
+                <span className="mono">{editingNoteValue.length}/500</span>
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                className="h-9 border border-panel-border bg-background-dark px-3 text-[10px] font-bold uppercase tracking-wider text-secondary-text hover:text-white"
+                onClick={handleCloseNoteEditor}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="h-9 border border-primary/50 bg-primary/10 px-3 text-[10px] font-bold uppercase tracking-wider text-primary hover:border-primary"
+                onClick={handleSaveNoteEdit}
+                type="button"
+              >
+                Save Note
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="flex min-h-screen w-full flex-col lg:mx-auto lg:max-w-[83.333333%]">
         <header className="sticky top-0 z-50 flex h-12 items-center justify-between border-b border-panel-border bg-background-dark px-4">
           <div className="flex items-center gap-6">
@@ -1188,7 +1283,7 @@ function App() {
 
                     <div className="border-t border-panel-border/70 pt-2">
                       <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-secondary-text">Performance</p>
-                      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                      <div className="grid grid-cols-3 gap-x-3 gap-y-1.5">
                         {performanceMatrixItems.map((item) => (
                           <div key={item.label}>
                             <p className="text-[9px] uppercase text-secondary-text">{item.label}</p>
@@ -1246,13 +1341,19 @@ function App() {
                         <span className="size-2 border border-danger bg-danger/40" />
                         <span className="text-[10px] text-secondary-text">{dashboard.chart.areaLegend}</span>
                       </div>
+                      {showDailyFeeBars && (
+                        <div className="flex items-center gap-1.5">
+                          <span className="h-2 w-1.5 bg-[#7F1D1D]" />
+                          <span className="text-[10px] text-secondary-text">{dashboard.chart.feeLegend ?? 'Daily Fees'}</span>
+                        </div>
+                      )}
                     </div>
                   </>
                 )}
               </div>
 
-              <div className="flex items-center gap-2">
-                <div className="overflow-hidden border border-panel-border bg-neutral-dark">
+	              <div className="flex items-center gap-2">
+	                <div className="overflow-hidden border border-panel-border bg-neutral-dark">
                   <div className="flex gap-px bg-neutral-dark">
                     <button
                       className={`h-8 px-3 text-[10px] font-bold uppercase ${chartView === 'PERFORMANCE' ? 'bg-primary text-background-dark' : 'bg-background-dark text-secondary-text hover:text-white'
@@ -1286,10 +1387,9 @@ function App() {
                     >
                       Insights
                     </button>
-                  </div>
-                </div>
-
-                <div className="flex h-8 items-center gap-2 border border-panel-border bg-neutral-dark/50 px-2 text-xs font-medium text-white">
+	                  </div>
+	                </div>
+	                <div className="flex h-8 items-center gap-2 border border-panel-border bg-neutral-dark/50 px-2 text-xs font-medium text-white">
                   <span className="text-[10px] font-bold uppercase text-secondary-text">Range</span>
                   <select
                     className="h-6 w-[72px] bg-transparent text-xs font-bold text-white outline-none"
@@ -1497,28 +1597,24 @@ function App() {
                   </div>
 
                   <div className="col-span-4 border border-panel-border bg-neutral-dark/20 px-3 py-2">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-secondary-text">Risk Snapshot</p>
-                    <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2">
-                      <div>
-                        <p className="text-[9px] uppercase text-secondary-text">Profit Factor</p>
-                        <p className="mono text-sm font-bold text-white">{dashboard.risk.profitFactor.toFixed(2)}</p>
-                      </div>
-                      <div>
-                        <p className="text-[9px] uppercase text-secondary-text">Expectancy</p>
-                        <p className={`mono text-sm font-bold ${dashboard.risk.expectancy >= 0 ? 'text-success' : 'text-danger'}`}>
-                          {formatSignedPnl(dashboard.risk.expectancy)}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-[9px] uppercase text-secondary-text">Max Drawdown</p>
-                        <p className="mono text-sm font-bold text-danger">
-                          {dashboard.risk.maxDrawdownPercent.toFixed(2)}% ({formatCompactValue(dashboard.risk.maxDrawdownAmount)})
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-[9px] uppercase text-secondary-text">Recovery</p>
-                        <p className="mono text-sm font-bold text-white">{dashboard.risk.recoveryDays} days</p>
-                      </div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-secondary-text">Order Type Performance</p>
+                    <div className="mt-2 space-y-2">
+                      {orderTypePerformance.map((item) => (
+                        <div className="border border-panel-border/70 bg-background-dark/50 px-2 py-1.5" key={item.label}>
+                          <div className="mb-1 flex items-center justify-between">
+                            <p className="text-[10px] font-bold uppercase text-white">{item.label}</p>
+                            <p className={`mono text-[10px] font-bold ${item.totalPnl >= 0 ? 'text-success' : 'text-danger'}`}>
+                              {formatSignedPnl(item.totalPnl)}
+                            </p>
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                            <p className="text-[9px] uppercase text-secondary-text">Trades: <span className="mono text-white">{item.trades}</span></p>
+                            <p className="text-[9px] uppercase text-secondary-text">Win Rate: <span className="mono text-white">{item.winRate.toFixed(1)}%</span></p>
+                            <p className="text-[9px] uppercase text-secondary-text">Avg PnL: <span className={`mono ${item.avgPnl >= 0 ? 'text-success' : 'text-danger'}`}>{formatSignedPnl(item.avgPnl)}</span></p>
+                            <p className="text-[9px] uppercase text-secondary-text">Avg Fee: <span className="mono text-secondary-text">{formatFee(item.avgFee)}</span></p>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -1531,6 +1627,27 @@ function App() {
                     viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
                   >
                     <path d={chartAreaPath} fill="rgba(255, 59, 48, 0.07)" />
+                    {showDailyFeeBars &&
+                      dashboard.chart.points.map((point, index) => {
+                        const barWidth = (CHART_WIDTH / Math.max(dashboard.chart.points.length, 1)) * 0.66
+                        const step = CHART_WIDTH / Math.max(dashboard.chart.points.length - 1, 1)
+                        const x = index * step - barWidth / 2
+                        const heightTop = mapValueToRange(point.feeValue ?? 0, 0, feeMax, FEE_BAR_BOTTOM, FEE_BAR_TOP)
+
+                        return (
+                          <rect
+                            fill="rgba(180, 83, 9, 0.78)"
+                            height={Math.max(1, FEE_BAR_BOTTOM - heightTop)}
+                            key={`fee-bar-${point.label}-${index}`}
+                            rx="0.8"
+                            stroke="rgba(245, 158, 11, 0.95)"
+                            strokeWidth="0.35"
+                            width={Math.max(1.5, barWidth)}
+                            x={Math.max(0, x)}
+                            y={heightTop}
+                          />
+                        )
+                      })}
                     <path d={chartLinePath} fill="none" stroke="#9CA3AF" strokeWidth="1.5" />
                     {hasAccountEquityLine && (
                       <path
@@ -1567,6 +1684,11 @@ function App() {
                             {dashboard.chart.secondLineLegend}: {formatCompactValue(hoveredChartPoint.secondaryLineValue)}
                           </p>
                         )}
+                        {showDailyFeeBars && Number.isFinite(hoveredChartPoint.feeValue) && (
+                          <p className="mono text-[#B45309]">
+                            {dashboard.chart.feeLegend ?? 'Daily Fees'}: {formatFee(hoveredChartPoint.feeValue)}
+                          </p>
+                        )}
                         <p className="mono text-danger">
                           {dashboard.chart.areaLegend}: {formatCompactValue(hoveredChartPoint.areaValue)}
                         </p>
@@ -1589,7 +1711,34 @@ function App() {
               )}
             </div>
 
-            <div className="mt-auto border-t border-panel-border pt-3" />
+            <div className="mt-auto border-t border-panel-border pt-3">
+              {chartView === 'PERFORMANCE' && (
+                <div className="flex justify-end">
+                  <div className="overflow-hidden border border-panel-border bg-neutral-dark">
+                    <div className="flex gap-px bg-neutral-dark">
+                      {[
+                        { id: 'DAILY', label: 'Daily' },
+                        { id: 'SESSION', label: 'Session' },
+                        { id: 'HOD', label: 'HOD' },
+                      ].map((option) => (
+                        <button
+                          className={`h-7 px-2.5 text-[10px] font-bold uppercase ${
+                            performanceView === option.id
+                              ? 'bg-primary text-background-dark'
+                              : 'bg-background-dark text-secondary-text hover:text-white'
+                          }`}
+                          key={option.id}
+                          onClick={() => setPerformanceView(option.id)}
+                          type="button"
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -1672,7 +1821,26 @@ function App() {
                   <thead>
                     <tr className="bg-neutral-dark/30 text-[10px] font-semibold uppercase text-secondary-text">
                       <th className="border-b border-r border-panel-border px-4 py-2">Date / Time</th>
-                      <th className="border-b border-r border-panel-border px-4 py-2">Symbol</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2">
+                        <div className="flex items-center gap-2">
+                          <span>Symbol</span>
+                          <select
+                            className="h-6 border border-panel-border bg-transparent px-1.5 text-[9px] font-bold uppercase text-white outline-none"
+                            id="symbol-filter-positions"
+                            onChange={(event) => {
+                              setSymbolFilter(event.target.value)
+                              setPage(1)
+                            }}
+                            value={symbolFilter}
+                          >
+                            {selectableSymbols.map((symbol) => (
+                              <option key={symbol} value={symbol}>
+                                {symbol === 'ALL' ? 'All' : symbol}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </th>
                       <th className="border-b border-r border-panel-border px-4 py-2">
                         <div className="flex items-center gap-2">
                           <span>Status</span>
@@ -1749,7 +1917,7 @@ function App() {
                               title={noteText || 'No note yet'}
                               type="button"
                             >
-                              {trade.status === 'OPEN' ? 'Edit Open Note' : noteText ? 'Edit Note' : 'Add Note'}
+                              {noteText ? 'Edit Note' : 'Add Note'}
                             </button>
                           </td>
                         </tr>
@@ -1763,7 +1931,26 @@ function App() {
                     <tr className="bg-neutral-dark/30 text-[10px] font-semibold uppercase text-secondary-text">
                       <th className="border-b border-r border-panel-border px-4 py-2">Date / Time</th>
                       <th className="border-b border-r border-panel-border px-4 py-2">Order ID</th>
-                      <th className="border-b border-r border-panel-border px-4 py-2">Symbol</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2">
+                        <div className="flex items-center gap-2">
+                          <span>Symbol</span>
+                          <select
+                            className="h-6 border border-panel-border bg-transparent px-1.5 text-[9px] font-bold uppercase text-white outline-none"
+                            id="symbol-filter-orders"
+                            onChange={(event) => {
+                              setSymbolFilter(event.target.value)
+                              setPage(1)
+                            }}
+                            value={symbolFilter}
+                          >
+                            {selectableSymbols.map((symbol) => (
+                              <option key={symbol} value={symbol}>
+                                {symbol === 'ALL' ? 'All' : symbol}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </th>
                       <th className="border-b border-r border-panel-border px-4 py-2">Side</th>
                       <th className="border-b border-r border-panel-border px-4 py-2">Type</th>
                       <th className="border-b border-r border-panel-border px-4 py-2">TIF</th>
