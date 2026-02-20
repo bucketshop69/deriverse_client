@@ -1,17 +1,78 @@
-# React + Vite
+# Deriverse Trading Analytics Dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Comprehensive analytics dashboard and trading journal built for the Deriverse bounty.
 
-Currently, two official plugins are available:
+## Overview
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+This project delivers a professional single-route dashboard for active traders with:
 
-## React Compiler
+- Performance tracking (PnL, win rate, volume, fees, L/S ratio, trade count, duration)
+- Time analytics (daily, session, and hour-of-day chart modes)
+- Risk analytics (profit factor, expectancy, max drawdown, recovery duration)
+- Execution analytics (maker/taker fee split, order type mix)
+- Journal workflow (trade table + editable notes persisted in local storage)
+- Workflow tools (position sizing calculator + CSV/PDF export)
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Tech Stack
 
-## Expanding the ESLint configuration
+- React + Vite
+- Tailwind CSS
+- Deterministic seeded mock data generator
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
-# deriverse_client
+## Local Development
+
+```bash
+npm install
+npm run dev
+```
+
+Build production bundle:
+
+```bash
+npm run build
+```
+
+Lint:
+
+```bash
+npm run lint
+```
+
+## Feature Coverage (Bounty Scope)
+
+- Total PnL tracking with visual indicators
+- Trading volume and fee analysis
+- Win rate and trade count metrics
+- Average trade duration
+- Long/short ratio
+- Largest gain/loss and average win/loss
+- Symbol filtering and date range controls
+- Historical performance chart with drawdown (daily mode)
+- Session and time-of-day analysis (chart mode toggle + analytics cards)
+- Trade history table with annotation editing
+- Fee composition and cumulative fee trend
+- Order type performance analysis
+
+## Data + Calculation Notes
+
+- All metrics are recomputed from filtered trades (symbol/date scope aware).
+- Notes are persisted in `localStorage` under `deriverse.notes.v1`.
+- Mock data is deterministic by seed for repeatable demos.
+
+## Project Structure
+
+- `src/App.jsx` - dashboard UI and interaction logic
+- `src/data/mockDashboardData.js` - mock generator + analytics/risk/summary model
+- `docs/SPEC.md` - product scope and delivery phases
+- `docs/issues/*.md` - implementation issues and milestone specs
+
+## Submission Checklist
+
+- Public GitHub repository link
+- Social profile link (for example, X/Twitter)
+- Short demo video/gif showing:
+  - Filtering by date and symbol
+  - Daily/Session/HOD chart switching
+  - Note editing persistence
+  - Position sizing calculation
+  - CSV/PDF export

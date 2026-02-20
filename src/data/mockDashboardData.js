@@ -49,6 +49,9 @@ const SYMBOLS = [
 const ORDER_TYPES = ['Market', 'Limit']
 const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const HEATMAP_SLOTS = ['00-03', '04-07', '08-11', '12-15', '16-19', '20-23']
+const DAY_MS = 24 * 60 * 60 * 1000
+const SESSION_LABELS = ['Asia', 'London', 'New York']
+const HOD_LABELS = Array.from({ length: 24 }, (_, hour) => String(hour).padStart(2, '0'))
 
 function createSeededRng(seed) {
   let value = seed >>> 0
@@ -69,6 +72,10 @@ function pick(rng, values) {
 
 function pad2(value) {
   return String(value).padStart(2, '0')
+}
+
+function toFixedNumber(value, digits = 2) {
+  return Number(value.toFixed(digits))
 }
 
 function formatDateTimeUTC(date) {
@@ -111,15 +118,58 @@ function formatDuration(minutes) {
   return `${hours}h ${remainderMinutes}m`
 }
 
-function getMonthShortLabel(year, monthIndex) {
-  return new Date(Date.UTC(year, monthIndex, 1)).toLocaleString('en-US', {
+function getMonthShortLabel(date) {
+  return date.toLocaleString('en-US', {
     month: 'short',
     timeZone: 'UTC',
   })
 }
 
-function toFixedNumber(value, digits = 2) {
-  return Number(value.toFixed(digits))
+function getDayKey(date) {
+  return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`
+}
+
+function fromDayKey(dayKey) {
+  const [year, month, day] = dayKey.split('-').map(Number)
+  return new Date(Date.UTC(year, month - 1, day))
+}
+
+function dayStartUtc(date) {
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
+}
+
+function formatDayLabel(date) {
+  return `${getMonthShortLabel(date)} ${pad2(date.getUTCDate())}`
+}
+
+function formatPeriodLabel(startDate, endDate) {
+  const start = `${getMonthShortLabel(startDate)} ${startDate.getUTCDate()}, ${startDate.getUTCFullYear()}`
+  const end = `${getMonthShortLabel(endDate)} ${endDate.getUTCDate()}, ${endDate.getUTCFullYear()}`
+  return `${start} - ${end}`
+}
+
+function getXLabels(points) {
+  if (points.length === 0) {
+    return ['-', '-', '-']
+  }
+
+  const start = points[0].label
+  const mid = points[Math.floor((points.length - 1) / 2)].label
+  const end = points[points.length - 1].label
+
+  return [start, mid, end]
+}
+
+function getSessionName(hour) {
+  if (hour < 8) {
+    return 'Asia'
+  }
+
+  if (hour < 16) {
+    return 'London'
+  }
+
+  return 'New York'
 }
 
 function createTrade({ rng, index, year, monthIndex, monthStartMs, monthEndMs }) {
@@ -181,53 +231,125 @@ function buildTrades({ year, monthIndex, totalTrades, seed }) {
   }))
 }
 
-function buildChartData({ year, monthIndex, trades, startingEquity }) {
-  const daysInMonth = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate()
-  const monthShort = getMonthShortLabel(year, monthIndex)
-  const dailyPnl = new Array(daysInMonth).fill(0)
-
-  for (const trade of trades) {
-    const day = trade.exitAt.getUTCDate()
-    dailyPnl[day - 1] += trade.pnl
+function summarizeTrades({ trades, startingEquity }) {
+  const totalTrades = trades.length
+  if (totalTrades === 0) {
+    return {
+      totalTrades: 0,
+      totalVolume: 0,
+      totalFees: 0,
+      totalPnl: 0,
+      netPnlPercent: 0,
+      winRate: 0,
+      longShortRatio: 0,
+      averageDurationMinutes: 0,
+      maxWin: 0,
+      maxLoss: 0,
+      averageWin: 0,
+      averageLoss: 0,
+      makerFees: 0,
+      takerFees: 0,
+      marketRatio: 0,
+      limitRatio: 0,
+      profitFactor: 0,
+      expectancy: 0,
+      maxDrawdownAmount: 0,
+      maxDrawdownPercent: 0,
+      recoveryDays: 0,
+    }
   }
 
+  const totalVolume = trades.reduce((sum, trade) => sum + trade.notional, 0)
+  const totalFees = trades.reduce((sum, trade) => sum + trade.fee, 0)
+  const totalPnl = trades.reduce((sum, trade) => sum + trade.pnl, 0)
+  const winners = trades.filter((trade) => trade.pnl > 0)
+  const losers = trades.filter((trade) => trade.pnl < 0)
+  const totalLongs = trades.filter((trade) => trade.side === 'LONG').length
+  const totalShorts = totalTrades - totalLongs
+  const totalDurationMinutes = trades.reduce((sum, trade) => sum + trade.durationMinutes, 0)
+  const maxWin = Math.max(...trades.map((trade) => trade.pnl))
+  const maxLoss = Math.min(...trades.map((trade) => trade.pnl))
+
+  const grossProfit = winners.reduce((sum, trade) => sum + trade.pnl, 0)
+  const grossLoss = Math.abs(losers.reduce((sum, trade) => sum + trade.pnl, 0))
+  const averageWin = winners.length > 0 ? grossProfit / winners.length : 0
+  const averageLoss = losers.length > 0 ? grossLoss / losers.length : 0
+
+  const makerFees = trades
+    .filter((trade) => trade.type === 'Limit')
+    .reduce((sum, trade) => sum + trade.fee, 0)
+  const takerFees = totalFees - makerFees
+
+  const marketTrades = trades.filter((trade) => trade.type === 'Market').length
+  const limitTrades = totalTrades - marketTrades
+
+  const orderedTrades = trades.slice().sort((a, b) => a.exitAt.getTime() - b.exitAt.getTime())
   let equity = startingEquity
   let peakEquity = startingEquity
+  let peakAt = orderedTrades[0]?.exitAt ?? null
+  let maxDrawdownAmount = 0
+  let maxDrawdownPercent = 0
+  let currentDrawdownStart = null
+  let maxRecoveryDays = 0
 
-  const points = dailyPnl.map((pnl, dayIndex) => {
-    equity += pnl
-    peakEquity = Math.max(peakEquity, equity)
+  for (const trade of orderedTrades) {
+    equity += trade.pnl
 
-    return {
-      day: dayIndex + 1,
-      pnl,
-      equity,
-      drawdown: peakEquity - equity,
-      label: `${monthShort} ${String(dayIndex + 1).padStart(2, '0')}`,
+    if (equity >= peakEquity) {
+      peakEquity = equity
+      peakAt = trade.exitAt
+
+      if (currentDrawdownStart) {
+        const days = Math.max(1, Math.round((trade.exitAt.getTime() - currentDrawdownStart.getTime()) / DAY_MS))
+        maxRecoveryDays = Math.max(maxRecoveryDays, days)
+        currentDrawdownStart = null
+      }
+
+      continue
     }
-  })
+
+    const drawdown = peakEquity - equity
+    const drawdownPercent = peakEquity > 0 ? (drawdown / peakEquity) * 100 : 0
+
+    if (!currentDrawdownStart) {
+      currentDrawdownStart = peakAt ?? trade.exitAt
+    }
+
+    if (drawdown > maxDrawdownAmount) {
+      maxDrawdownAmount = drawdown
+      maxDrawdownPercent = drawdownPercent
+    }
+  }
+
+  if (currentDrawdownStart && orderedTrades.length > 0) {
+    const lastTrade = orderedTrades[orderedTrades.length - 1]
+    const days = Math.max(1, Math.round((lastTrade.exitAt.getTime() - currentDrawdownStart.getTime()) / DAY_MS))
+    maxRecoveryDays = Math.max(maxRecoveryDays, days)
+  }
 
   return {
-    points,
-    ath: peakEquity,
-    xLabels: [
-      `${monthShort} ${String(1).padStart(2, '0')}`,
-      `${monthShort} ${String(Math.ceil(daysInMonth / 2)).padStart(2, '0')}`,
-      `${monthShort} ${String(daysInMonth).padStart(2, '0')}`,
-    ],
+    totalTrades,
+    totalVolume,
+    totalFees,
+    totalPnl,
+    netPnlPercent: (totalPnl / startingEquity) * 100,
+    winRate: (winners.length / totalTrades) * 100,
+    longShortRatio: totalLongs / Math.max(totalShorts, 1),
+    averageDurationMinutes: totalDurationMinutes / totalTrades,
+    maxWin,
+    maxLoss,
+    averageWin,
+    averageLoss,
+    makerFees,
+    takerFees,
+    marketRatio: (marketTrades / totalTrades) * 100,
+    limitRatio: (limitTrades / totalTrades) * 100,
+    profitFactor: grossLoss > 0 ? grossProfit / grossLoss : 0,
+    expectancy: totalPnl / totalTrades,
+    maxDrawdownAmount,
+    maxDrawdownPercent,
+    recoveryDays: maxRecoveryDays,
   }
-}
-
-function getSessionName(hour) {
-  if (hour < 8) {
-    return 'Asia'
-  }
-
-  if (hour < 16) {
-    return 'London'
-  }
-
-  return 'New York'
 }
 
 function buildAnalytics(trades) {
@@ -257,10 +379,7 @@ function buildAnalytics(trades) {
 
   const sessions = Object.values(sessionMap)
   const bestDay = weekdayPnl.reduce((best, current) => (current.pnl > best.pnl ? current : best), weekdayPnl[0])
-  const heatmapMax = heatmapValues.reduce(
-    (max, row) => Math.max(max, ...row),
-    1,
-  )
+  const heatmapMax = heatmapValues.reduce((max, row) => Math.max(max, ...row), 1)
 
   const streakSource = trades
     .filter((trade) => trade.status === 'CLOSED')
@@ -302,63 +421,240 @@ function buildAnalytics(trades) {
   }
 }
 
-function summarizeTrades({ trades, startingEquity }) {
-  const totalTrades = trades.length
-  const totalVolume = trades.reduce((sum, trade) => sum + trade.notional, 0)
-  const totalFees = trades.reduce((sum, trade) => sum + trade.fee, 0)
-  const totalPnl = trades.reduce((sum, trade) => sum + trade.pnl, 0)
-  const totalWins = trades.filter((trade) => trade.pnl > 0).length
-  const totalLongs = trades.filter((trade) => trade.side === 'LONG').length
-  const totalShorts = totalTrades - totalLongs
-  const totalDurationMinutes = trades.reduce((sum, trade) => sum + trade.durationMinutes, 0)
-  const maxWin = Math.max(...trades.map((trade) => trade.pnl))
-  const maxLoss = Math.min(...trades.map((trade) => trade.pnl))
+function buildFeeTrend(trades) {
+  if (trades.length === 0) {
+    return []
+  }
 
-  const makerFees = trades
-    .filter((trade) => trade.type === 'Limit')
-    .reduce((sum, trade) => sum + trade.fee, 0)
-  const takerFees = totalFees - makerFees
+  const feeByDay = new Map()
+  for (const trade of trades) {
+    const key = getDayKey(trade.exitAt)
+    feeByDay.set(key, (feeByDay.get(key) ?? 0) + trade.fee)
+  }
 
-  const marketTrades = trades.filter((trade) => trade.type === 'Market').length
-  const limitTrades = totalTrades - marketTrades
+  let running = 0
+  return [...feeByDay.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([dayKey, fee]) => {
+      running += fee
+      return {
+        label: formatDayLabel(fromDayKey(dayKey)),
+        value: running,
+      }
+    })
+}
+
+function buildDailyChart({ trades, startDate, endDate, startingEquity }) {
+  const pnlByDay = new Map()
+  for (const trade of trades) {
+    const key = getDayKey(trade.exitAt)
+    pnlByDay.set(key, (pnlByDay.get(key) ?? 0) + trade.pnl)
+  }
+
+  let equity = startingEquity
+  let peak = startingEquity
+  const points = []
+
+  for (let dayMs = dayStartUtc(startDate); dayMs <= dayStartUtc(endDate); dayMs += DAY_MS) {
+    const dayDate = new Date(dayMs)
+    const dayKey = getDayKey(dayDate)
+    const pnl = pnlByDay.get(dayKey) ?? 0
+    equity += pnl
+    peak = Math.max(peak, equity)
+
+    points.push({
+      label: formatDayLabel(dayDate),
+      lineValue: equity,
+      areaValue: peak - equity,
+    })
+  }
 
   return {
-    totalTrades,
-    totalVolume,
-    totalFees,
-    totalPnl,
-    netPnlPercent: (totalPnl / startingEquity) * 100,
-    winRate: (totalWins / totalTrades) * 100,
-    longShortRatio: totalLongs / Math.max(totalShorts, 1),
-    averageDurationMinutes: totalDurationMinutes / totalTrades,
-    maxWin,
-    maxLoss,
-    makerFees,
-    takerFees,
-    marketRatio: (marketTrades / totalTrades) * 100,
-    limitRatio: (limitTrades / totalTrades) * 100,
+    lineLegend: 'Cumulative PnL',
+    areaLegend: 'Drawdown Overlay',
+    points,
+    xLabels: getXLabels(points),
+    headlineLabel: 'ATH',
+    headlineValue: formatAth(peak),
+    headlineClass: 'text-success',
   }
 }
 
-export function createDashboardMockData({ year = 2023, monthIndex = 9, totalTrades = 142, seed = 20231001 } = {}) {
-  const startingEquity = 35000
-  const daysInMonth = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate()
-  const monthShort = getMonthShortLabel(year, monthIndex)
-  const trades = buildTrades({ year, monthIndex, totalTrades, seed })
-  const summary = summarizeTrades({ trades, startingEquity })
-  const chart = buildChartData({ year, monthIndex, trades, startingEquity })
-  const analytics = buildAnalytics(trades)
+function buildSessionChart(trades) {
+  const aggregates = {
+    Asia: { label: 'Asia', pnl: 0, fees: 0 },
+    London: { label: 'London', pnl: 0, fees: 0 },
+    'New York': { label: 'New York', pnl: 0, fees: 0 },
+  }
+
+  for (const trade of trades) {
+    const name = getSessionName(trade.exitAt.getUTCHours())
+    aggregates[name].pnl += trade.pnl
+    aggregates[name].fees += trade.fee
+  }
+
+  const points = SESSION_LABELS.map((label) => ({
+    label,
+    lineValue: aggregates[label].pnl,
+    areaValue: aggregates[label].fees,
+  }))
+  const best = points.reduce((winner, current) => (current.lineValue > winner.lineValue ? current : winner), points[0])
 
   return {
-    periodLabel: `${monthShort} 1 - ${monthShort} ${daysInMonth}, ${year}`,
-    modeLabel: 'Normal',
-    symbolFilterLabel: 'All Symbols',
+    lineLegend: 'Session Net PnL',
+    areaLegend: 'Session Fees',
+    points,
+    xLabels: getXLabels(points),
+    headlineLabel: 'Best Session',
+    headlineValue: `${best.label} (${formatSignedPnl(best.lineValue)})`,
+    headlineClass: best.lineValue >= 0 ? 'text-success' : 'text-danger',
+  }
+}
+
+function buildHodChart(trades) {
+  const buckets = HOD_LABELS.map((hour) => ({ label: `${hour}:00`, pnl: 0, fees: 0 }))
+
+  for (const trade of trades) {
+    const hour = trade.exitAt.getUTCHours()
+    buckets[hour].pnl += trade.pnl
+    buckets[hour].fees += trade.fee
+  }
+
+  const points = buckets.map((bucket) => ({
+    label: bucket.label,
+    lineValue: bucket.pnl,
+    areaValue: bucket.fees,
+  }))
+  const best = points.reduce((winner, current) => (current.lineValue > winner.lineValue ? current : winner), points[0])
+
+  return {
+    lineLegend: 'Hourly Net PnL',
+    areaLegend: 'Hourly Fees',
+    points,
+    xLabels: getXLabels(points),
+    headlineLabel: 'Best Hour',
+    headlineValue: `${best.label} (${formatSignedPnl(best.lineValue)})`,
+    headlineClass: best.lineValue >= 0 ? 'text-success' : 'text-danger',
+  }
+}
+
+function buildChartModel({ trades, startDate, endDate, startingEquity, chartView }) {
+  if (chartView === 'SESSION') {
+    return buildSessionChart(trades)
+  }
+
+  if (chartView === 'HOD') {
+    return buildHodChart(trades)
+  }
+
+  return buildDailyChart({ trades, startDate, endDate, startingEquity })
+}
+
+function parseDateInputValue(value) {
+  if (!value) {
+    return null
+  }
+
+  const [year, month, day] = value.split('-').map(Number)
+  if (!year || !month || !day) {
+    return null
+  }
+
+  return new Date(Date.UTC(year, month - 1, day, 0, 0, 0))
+}
+
+function normalizeDateRange(startDate, endDate) {
+  if (!startDate || !endDate) {
+    return { startDate, endDate }
+  }
+
+  if (startDate.getTime() <= endDate.getTime()) {
+    return { startDate, endDate }
+  }
+
+  return { startDate: endDate, endDate: startDate }
+}
+
+export function filterTradesByScope({ trades, symbol = 'ALL', startDate = null, endDate = null }) {
+  return trades.filter((trade) => {
+    if (symbol !== 'ALL' && trade.symbol !== symbol) {
+      return false
+    }
+
+    const exitMs = trade.exitAt.getTime()
+    if (startDate && exitMs < startDate.getTime()) {
+      return false
+    }
+
+    if (endDate && exitMs > endDate.getTime() + (DAY_MS - 1)) {
+      return false
+    }
+
+    return true
+  })
+}
+
+export function createDashboardSnapshot({
+  trades,
+  startingEquity,
+  startDateInput,
+  endDateInput,
+  chartView = 'DAILY',
+} = {}) {
+  if (!trades || trades.length === 0) {
+    return {
+      periodLabel: '-',
+      chart: buildChartModel({
+        trades: [],
+        startDate: new Date(Date.UTC(2023, 0, 1)),
+        endDate: new Date(Date.UTC(2023, 0, 1)),
+        startingEquity,
+        chartView,
+      }),
+      analytics: buildAnalytics([]),
+      feeTrend: [],
+      stats: {
+        netPnl: '+0.0%',
+        winRate: '0.0%',
+        volume: formatUsd(0),
+        fees: formatUsd(0),
+        longShortRatio: '0.00',
+        totalTrades: '0',
+        averageDuration: '0h 0m',
+        maxWin: formatUsd(0),
+        maxLoss: `-${formatUsd(0)}`,
+        averageWin: formatUsd(0),
+        averageLoss: formatUsd(0),
+        netPnlValue: 0,
+      },
+      feeBreakdown: { maker: 0, taker: 0 },
+      orderTypeBreakdown: { market: 0, limit: 0 },
+      risk: {
+        profitFactor: 0,
+        expectancy: 0,
+        maxDrawdownAmount: 0,
+        maxDrawdownPercent: 0,
+        recoveryDays: 0,
+      },
+    }
+  }
+
+  const latestTrade = trades.reduce((latest, trade) => (trade.exitAt > latest.exitAt ? trade : latest), trades[0])
+  const earliestTrade = trades.reduce((earliest, trade) => (trade.exitAt < earliest.exitAt ? trade : earliest), trades[0])
+  const parsedStart = parseDateInputValue(startDateInput) ?? new Date(dayStartUtc(earliestTrade.exitAt))
+  const parsedEnd = parseDateInputValue(endDateInput) ?? new Date(dayStartUtc(latestTrade.exitAt))
+  const { startDate, endDate } = normalizeDateRange(parsedStart, parsedEnd)
+
+  const summary = summarizeTrades({ trades, startingEquity })
+  const chart = buildChartModel({ trades, startDate, endDate, startingEquity, chartView })
+  const analytics = buildAnalytics(trades)
+  const feeTrend = buildFeeTrend(trades)
+
+  return {
+    periodLabel: formatPeriodLabel(startDate, endDate),
     chart,
     analytics,
-    tools: {
-      chatgptUrl: 'https://chat.openai.com/',
-      claudeUrl: 'https://claude.ai/',
-    },
+    feeTrend,
     stats: {
       netPnl: `${summary.netPnlPercent >= 0 ? '+' : ''}${summary.netPnlPercent.toFixed(1)}%`,
       winRate: `${summary.winRate.toFixed(1)}%`,
@@ -369,8 +665,9 @@ export function createDashboardMockData({ year = 2023, monthIndex = 9, totalTrad
       averageDuration: formatDuration(summary.averageDurationMinutes),
       maxWin: formatCompactUsd(summary.maxWin),
       maxLoss: `-${formatCompactUsd(Math.abs(summary.maxLoss))}`,
+      averageWin: formatCompactUsd(summary.averageWin),
+      averageLoss: formatCompactUsd(summary.averageLoss),
       netPnlValue: summary.netPnlPercent,
-      feeValue: summary.totalFees,
     },
     feeBreakdown: {
       maker: summary.makerFees,
@@ -379,6 +676,35 @@ export function createDashboardMockData({ year = 2023, monthIndex = 9, totalTrad
     orderTypeBreakdown: {
       market: summary.marketRatio,
       limit: summary.limitRatio,
+    },
+    risk: {
+      profitFactor: summary.profitFactor,
+      expectancy: summary.expectancy,
+      maxDrawdownAmount: summary.maxDrawdownAmount,
+      maxDrawdownPercent: summary.maxDrawdownPercent,
+      recoveryDays: summary.recoveryDays,
+    },
+  }
+}
+
+export function createDashboardMockData({ year = 2023, monthIndex = 9, totalTrades = 142, seed = 20231001 } = {}) {
+  const startingEquity = 35000
+  const trades = buildTrades({ year, monthIndex, totalTrades, seed })
+  const sortedByTimeAsc = trades.slice().sort((a, b) => a.exitAt.getTime() - b.exitAt.getTime())
+  const startDate = sortedByTimeAsc[0].exitAt
+  const endDate = sortedByTimeAsc[sortedByTimeAsc.length - 1].exitAt
+  const availableSymbols = [...new Set(trades.map((trade) => trade.symbol))].sort()
+
+  return {
+    modeLabel: 'Normal',
+    symbolFilterLabel: 'All Symbols',
+    startingEquity,
+    defaultDateStart: `${startDate.getUTCFullYear()}-${pad2(startDate.getUTCMonth() + 1)}-${pad2(startDate.getUTCDate())}`,
+    defaultDateEnd: `${endDate.getUTCFullYear()}-${pad2(endDate.getUTCMonth() + 1)}-${pad2(endDate.getUTCDate())}`,
+    availableSymbols,
+    tools: {
+      chatgptUrl: 'https://chat.openai.com/',
+      claudeUrl: 'https://claude.ai/',
     },
     table: {
       totalTrades: trades.length,

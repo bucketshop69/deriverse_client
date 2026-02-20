@@ -4,12 +4,16 @@ export default {
   theme: {
     extend: {
       colors: {
-        primary: '#0ddbf2',
+        primary: '#9CA3AF',
         'background-dark': '#0D0D0F',
         'neutral-dark': '#1A1A1A',
+        'panel-border': '#2A2A2A',
         'secondary-text': '#666666',
         success: '#00C087',
         danger: '#FF3B30',
+      },
+      borderWidth: {
+        DEFAULT: '1.5px',
       },
       fontFamily: {
         display: ['Space Grotesk', 'sans-serif'],
