@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { useWalletModal } from '@solana/wallet-adapter-react-ui'
+import DataTable from './components/data-table/DataTable'
+import AppHeader from './components/layout/AppHeader'
 import DepositModal from './components/DepositModal'
+import CustomRangeModal from './components/modals/CustomRangeModal'
+import NoteEditorModal from './components/modals/NoteEditorModal'
+import AccountPanel from './components/panels/AccountPanel'
 import {
   createDashboardMockData,
   createDashboardSnapshot,
@@ -315,27 +320,6 @@ function downloadBlob(blob, filename) {
   link.download = filename
   link.click()
   URL.revokeObjectURL(url)
-}
-
-function ChevronDownIcon({ className = '' }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-      <path d="m6 9 6 6 6-6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
-    </svg>
-  )
-}
-
-function DeriverseLogo({ className = '' }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
-      <path
-        clipRule="evenodd"
-        d="M47.2426 24L24 47.2426L0.757355 24L24 0.757355L47.2426 24ZM12.2426 21H35.7574L24 9.24264L12.2426 21Z"
-        fill="currentColor"
-        fillRule="evenodd"
-      />
-    </svg>
-  )
 }
 
 function App() {
@@ -1210,232 +1194,42 @@ function App() {
         onClose={() => setIsDepositModalOpen(false)}
         publicKey={publicKey}
       />
-      {isCustomRangeModalOpen && (
-        <div className="fixed inset-0 z-[66] flex items-center justify-center bg-black/65 px-4">
-          <div className="w-full max-w-[460px] border border-panel-border bg-background-dark p-4 shadow-[0_20px_70px_rgba(0,0,0,0.45)]">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-secondary-text">Custom Range</p>
-                <p className="text-sm font-bold text-white">Select start and end date</p>
-              </div>
-              <button
-                className="h-8 w-8 border border-panel-border bg-neutral-dark/40 text-lg leading-none text-secondary-text hover:text-white"
-                onClick={handleCloseCustomRangeModal}
-                type="button"
-              >
-                x
-              </button>
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <label className="block">
-                <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-secondary-text">Start Date</span>
-                <input
-                  className="h-9 w-full border border-panel-border bg-background-dark px-2 text-xs font-bold text-white outline-none"
-                  onChange={(event) => setCustomRangeDraftStartInput(event.target.value)}
-                  type="date"
-                  value={customRangeDraftStartInput}
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-secondary-text">End Date</span>
-                <input
-                  className="h-9 w-full border border-panel-border bg-background-dark px-2 text-xs font-bold text-white outline-none"
-                  onChange={(event) => setCustomRangeDraftEndInput(event.target.value)}
-                  type="date"
-                  value={customRangeDraftEndInput}
-                />
-              </label>
-            </div>
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                className="h-9 border border-panel-border bg-background-dark px-3 text-[10px] font-bold uppercase tracking-wider text-secondary-text hover:text-white"
-                onClick={handleCloseCustomRangeModal}
-                type="button"
-              >
-                Cancel
-              </button>
-              <button
-                className="h-9 border border-primary/50 bg-primary/10 px-3 text-[10px] font-bold uppercase tracking-wider text-primary hover:border-primary disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={!customRangeDraftStartInput || !customRangeDraftEndInput}
-                onClick={handleApplyCustomRange}
-                type="button"
-              >
-                Apply Range
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {editingNoteTrade && (
-        <div className="fixed inset-0 z-[65] flex items-center justify-center bg-black/65 px-4">
-          <div className="w-full max-w-[560px] border border-panel-border bg-background-dark p-4 shadow-[0_20px_70px_rgba(0,0,0,0.45)]">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-secondary-text">Position Note</p>
-                <p className="mono text-sm font-bold text-white">{editingNoteTrade.symbol}</p>
-              </div>
-              <button
-                className="h-8 w-8 border border-panel-border bg-neutral-dark/40 text-lg leading-none text-secondary-text hover:text-white"
-                onClick={handleCloseNoteEditor}
-                type="button"
-              >
-                x
-              </button>
-            </div>
-
-            <div className="mt-3">
-              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-secondary-text" htmlFor="position-note-editor">
-                Notes
-              </label>
-              <textarea
-                className="thin-scrollbar h-32 w-full resize-none border border-panel-border bg-background-dark px-3 py-2 text-sm text-white outline-none placeholder:text-secondary-text/70"
-                id="position-note-editor"
-                maxLength={500}
-                onChange={(event) => setEditingNoteValue(event.target.value)}
-                placeholder="Add context for this position..."
-                value={editingNoteValue}
-              />
-              <div className="mt-1 flex items-center justify-between text-[10px] text-secondary-text">
-                <span>Leave empty to remove note</span>
-                <span className="mono">{editingNoteValue.length}/500</span>
-              </div>
-            </div>
-
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                className="h-9 border border-panel-border bg-background-dark px-3 text-[10px] font-bold uppercase tracking-wider text-secondary-text hover:text-white"
-                onClick={handleCloseNoteEditor}
-                type="button"
-              >
-                Cancel
-              </button>
-              <button
-                className="h-9 border border-primary/50 bg-primary/10 px-3 text-[10px] font-bold uppercase tracking-wider text-primary hover:border-primary"
-                onClick={handleSaveNoteEdit}
-                type="button"
-              >
-                Save Note
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <CustomRangeModal
+        draftEndInput={customRangeDraftEndInput}
+        draftStartInput={customRangeDraftStartInput}
+        isOpen={isCustomRangeModalOpen}
+        onApply={handleApplyCustomRange}
+        onClose={handleCloseCustomRangeModal}
+        onDraftEndChange={setCustomRangeDraftEndInput}
+        onDraftStartChange={setCustomRangeDraftStartInput}
+      />
+      <NoteEditorModal
+        isOpen={Boolean(editingNoteTrade)}
+        maxLength={500}
+        noteValue={editingNoteValue}
+        onClose={handleCloseNoteEditor}
+        onNoteChange={setEditingNoteValue}
+        onSave={handleSaveNoteEdit}
+        trade={editingNoteTrade}
+      />
       <div className="flex min-h-screen w-full flex-col lg:mx-auto lg:max-w-[83.333333%]">
-        <header className="sticky top-0 z-50 flex h-12 items-center justify-between border-b border-panel-border bg-background-dark px-4">
-          <div className="flex items-center gap-6">
-            <div className="flex items-center gap-2">
-              <DeriverseLogo className="size-5 text-primary" />
-              <h1 className="text-base font-bold tracking-tight">DERIVERSE</h1>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              className={`h-8 border px-3 text-[10px] font-bold uppercase tracking-wide ${
-                connected
-                  ? 'border-panel-border bg-neutral-dark/50 text-white hover:border-secondary-text'
-                  : 'cursor-not-allowed border-panel-border/60 bg-neutral-dark/20 text-secondary-text/70'
-              }`}
-              disabled={!connected}
-              onClick={handleOpenDepositModal}
-              title={!connected ? 'Connect wallet to deposit' : 'Deposit funds'}
-              type="button"
-            >
-              Deposit
-            </button>
-            <button
-              className={`h-8 border px-3 text-[10px] font-bold uppercase tracking-wide ${
-                connected
-                  ? 'border-success/40 bg-success/10 text-success hover:border-success'
-                  : 'border-panel-border bg-neutral-dark/50 text-white hover:border-secondary-text'
-              }`}
-              onClick={handleWalletConnectClick}
-              type="button"
-            >
-              {connecting ? 'Connecting...' : connected ? walletAddressLabel : 'Connect Wallet'}
-            </button>
-            {connected && (
-              <button
-                className="h-8 border border-panel-border bg-background-dark px-2 text-[10px] font-bold uppercase tracking-wide text-secondary-text hover:text-white"
-                onClick={handleWalletDisconnectClick}
-                type="button"
-              >
-                Disconnect
-              </button>
-            )}
-          </div>
-        </header>
+        <AppHeader
+          connected={connected}
+          connecting={connecting}
+          onDeposit={handleOpenDepositModal}
+          onWalletConnect={handleWalletConnectClick}
+          onWalletDisconnect={handleWalletDisconnectClick}
+          walletAddressLabel={walletAddressLabel}
+        />
 
         <div className="grid h-[45vh] min-h-[340px] grid-cols-12 gap-px overflow-hidden border-b border-panel-border bg-neutral-dark">
-          <div className="col-span-4 h-full min-h-0 overflow-hidden bg-background-dark">
-            <div className="flex h-full flex-col">
-              <div className="border-b border-panel-border px-3 py-2">
-                <div className="overflow-hidden border border-panel-border">
-                  <div className="flex gap-px ">
-                    {['ALL', 'SPOT', 'PERPS'].map((scope) => (
-                      <button
-                        className={`h-7 px-2.5 text-[10px] font-bold uppercase ${accountScope === scope ? 'bg-primary text-background-dark' : 'bg-background-dark text-secondary-text hover:text-white'
-                          }`}
-                        key={scope}
-                        onClick={() => setAccountScope(scope)}
-                        type="button"
-                      >
-                        {scope}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="thin-scrollbar flex-1 overflow-y-auto p-3">
-                <section className="border border-panel-border bg-neutral-dark/20">
-                  <div className="space-y-2 p-2">
-                    <div>
-                      <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-secondary-text">Account</p>
-                      <div className="grid grid-cols-3 gap-x-2 gap-y-1.5">
-                        {accountMatrixItems.map((item) => (
-                          <div key={item.label}>
-                            <p className="text-[9px] uppercase text-secondary-text">{item.label}</p>
-                            <p className={`mono text-sm font-bold leading-none ${item.valueClass}`}>{item.value}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="border-t border-panel-border/70 pt-2">
-                      <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-secondary-text">Performance</p>
-                      <div className="grid grid-cols-3 gap-x-3 gap-y-1.5">
-                        {performanceMatrixItems.map((item) => (
-                          <div key={item.label}>
-                            <p className="text-[9px] uppercase text-secondary-text">{item.label}</p>
-                            <p className={`mono text-sm font-bold leading-none ${item.valueClass}`}>
-                              {item.value}
-                              {item.delta && <span className="text-[9px] text-secondary-text"> · {item.delta}</span>}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="border-t border-panel-border/70 pt-2">
-                      <div className="mb-1 flex items-center justify-between">
-                        <p className="text-[9px] font-bold uppercase tracking-wider text-secondary-text">Scope</p>
-                        <p className="text-[9px] uppercase text-secondary-text">{accountScope}</p>
-                      </div>
-                      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
-                        {scopeMatrixItems.map((item) => (
-                          <div key={item.label}>
-                            <p className="text-[9px] uppercase text-secondary-text">{item.label}</p>
-                            <p className={`mono text-sm font-bold leading-none ${item.valueClass}`}>{item.value}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </section>
-              </div>
-            </div>
-          </div>
+          <AccountPanel
+            accountMatrixItems={accountMatrixItems}
+            accountScope={accountScope}
+            onAccountScopeChange={setAccountScope}
+            performanceMatrixItems={performanceMatrixItems}
+            scopeMatrixItems={scopeMatrixItems}
+          />
 
           <div className="col-span-8 flex h-full min-h-0 flex-col overflow-hidden border-l border-panel-border bg-background-dark p-2">
             <div className="mb-2 flex items-center justify-between gap-3">
@@ -1863,460 +1657,57 @@ function App() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-hidden p-0">
-          <div className="flex h-full flex-col bg-background-dark">
-            <div className="flex items-center justify-between border-b border-panel-border px-4 py-2">
-              <div className="flex items-center gap-2">
-                {[
-                  { id: 'POSITIONS', label: 'Positions' },
-                  { id: 'ORDERS', label: 'Orders' },
-                  { id: 'TRANSFERS', label: 'Deposits/Withdrawals' },
-                ].map((option) => (
-                  <button
-                    className={`h-7 border px-3 text-[10px] font-bold uppercase transition-colors ${
-                      tableView === option.id
-                        ? 'border-primary/50 bg-primary/10 text-primary'
-                        : 'border-panel-border text-secondary-text hover:text-white'
-                    }`}
-                    key={option.id}
-                    onClick={() => {
-                      setTableView(option.id)
-                      setPage(1)
-                    }}
-                    type="button"
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold uppercase text-secondary-text">Ask AI</span>
-                <a
-                  className="h-7 border border-panel-border px-3 text-[10px] font-bold uppercase leading-7 text-secondary-text transition-colors hover:text-white"
-                  href={chatgptPrefillUrl}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  ChatGPT
-                </a>
-                <a
-                  className="h-7 border border-panel-border px-3 text-[10px] font-bold uppercase leading-7 text-secondary-text transition-colors hover:text-white"
-                  href={claudePrefillUrl}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  Claude
-                </a>
-
-                <label className="flex items-center gap-2 text-[10px] font-bold uppercase text-secondary-text" htmlFor="export-menu">
-                  Export
-                  <select
-                    className="h-7 border border-panel-border bg-background-dark px-2 text-[10px] font-bold uppercase text-white outline-none disabled:cursor-not-allowed disabled:opacity-40"
-                    disabled={activeRows.length === 0}
-                    id="export-menu"
-                    onChange={(event) => {
-                      if (event.target.value === 'CSV') {
-                        handleExportCsv()
-                      }
-
-                      if (event.target.value === 'PDF') {
-                        handleExportPdf()
-                      }
-
-                      event.target.value = ''
-                    }}
-                    defaultValue=""
-                  >
-                    <option value="" disabled>Choose</option>
-                    <option value="CSV">CSV</option>
-                    <option value="PDF">PDF</option>
-                  </select>
-                </label>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
-              {tableView === 'POSITIONS' ? (
-                <table className="w-full min-w-[1280px] text-left text-xs">
-                  <thead>
-                    <tr className="bg-neutral-dark/30 text-[10px] font-semibold uppercase text-secondary-text">
-                      <th className="border-b border-r border-panel-border px-4 py-2">Date / Time</th>
-                      <th className="border-b border-r border-panel-border px-4 py-2">
-                        <div className="flex items-center gap-2">
-                          <span>Symbol</span>
-                          <select
-                            className="h-6 border border-panel-border bg-transparent px-1.5 text-[9px] font-bold uppercase text-white outline-none"
-                            id="symbol-filter-positions"
-                            onChange={(event) => {
-                              setSymbolFilter(event.target.value)
-                              setPage(1)
-                            }}
-                            value={symbolFilter}
-                          >
-                            {selectableSymbols.map((symbol) => (
-                              <option key={symbol} value={symbol}>
-                                {symbol === 'ALL' ? 'All' : symbol}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </th>
-                      <th className="border-b border-r border-panel-border px-4 py-2">
-                        <div className="flex items-center gap-2">
-                          <span>Status</span>
-                          <select
-                            className="h-6 border border-panel-border bg-transparent px-1.5 text-[9px] font-bold uppercase text-white outline-none"
-                            id="status-filter"
-                            onChange={(event) => {
-                              setStatusFilter(event.target.value)
-                              setPage(1)
-                            }}
-                            value={statusFilter}
-                          >
-                            <option value="ALL">All</option>
-                            <option value="OPEN">Open</option>
-                            <option value="CLOSED">Closed</option>
-                          </select>
-                        </div>
-                      </th>
-                      <th className="border-b border-r border-panel-border px-4 py-2">Side</th>
-                      <th className="border-b border-r border-panel-border px-4 py-2">Type</th>
-                      <th className="border-b border-r border-panel-border px-4 py-2 text-right">Size</th>
-                      <th className="border-b border-r border-panel-border px-4 py-2 text-right">Entry</th>
-                      <th className="border-b border-r border-panel-border px-4 py-2 text-right">Exit</th>
-                      <th className="border-b border-r border-panel-border px-4 py-2 text-right">PnL</th>
-                      <th className="border-b border-r border-panel-border px-4 py-2 text-right">Fee</th>
-                      <th className="border-b border-panel-border px-4 py-2 text-center">Notes</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-neutral-dark">
-                    {paginatedRows.map((trade) => {
-                      const noteText = annotationMap[trade.id] ?? trade.annotation ?? ''
-                      return (
-                        <tr className="group transition-colors hover:bg-neutral-dark/10" key={trade.id}>
-                          <td className="mono px-4 py-2 text-secondary-text">{trade.dateTimeLabel}</td>
-                          <td className="px-4 py-2 font-bold uppercase tracking-tight text-white">{trade.symbol}</td>
-                          <td className="px-4 py-2">
-                            <span
-                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-bold ${trade.status === 'OPEN'
-                                ? 'border border-primary/40 bg-primary/10 text-primary'
-                                : 'border border-secondary-text/30 bg-neutral-dark/40 text-secondary-text'
-                                }`}
-                            >
-                              <span className="size-1 rounded-full bg-current" />
-                              {trade.status}
-                            </span>
-                          </td>
-                          <td className="px-4 py-2">
-                            <span
-                              className={`inline-flex px-1.5 py-0.5 text-[9px] font-bold ${trade.side === 'LONG'
-                                ? 'border border-success/20 bg-success/10 text-success'
-                                : 'border border-danger/20 bg-danger/10 text-danger'
-                                }`}
-                            >
-                              {trade.side}
-                            </span>
-                          </td>
-                          <td className="px-4 py-2 text-[10px] font-medium uppercase text-secondary-text">{trade.type}</td>
-                          <td className="mono px-4 py-2 text-right text-white">
-                            {formatTradeSize(trade.size, trade.baseAsset, trade.sizeDigits)}
-                          </td>
-                          <td className="mono px-4 py-2 text-right text-white">{formatPrice(trade.entry)}</td>
-                          <td className="mono px-4 py-2 text-right text-white">{formatPrice(trade.exit)}</td>
-                          <td className={`mono px-4 py-2 text-right font-bold ${trade.pnl >= 0 ? 'text-success' : 'text-danger'}`}>
-                            {formatSignedPnl(trade.pnl)}
-                          </td>
-                          <td className="mono px-4 py-2 text-right text-secondary-text">{formatFee(trade.fee)}</td>
-                          <td className="px-4 py-2 text-center">
-                            <button
-                              className={`h-6 border px-3 text-[10px] font-bold uppercase transition-colors ${trade.status === 'OPEN'
-                                ? 'border-primary/40 text-primary hover:border-primary'
-                                : 'border-panel-border text-secondary-text hover:border-secondary-text/50 hover:text-white'
-                                }`}
-                              onClick={() => handleEditNote(trade)}
-                              title={noteText || 'No note yet'}
-                              type="button"
-                            >
-                              {noteText ? 'Edit Note' : 'Add Note'}
-                            </button>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              ) : tableView === 'ORDERS' ? (
-                <table className="w-full min-w-[1120px] text-left text-xs">
-                  <thead>
-                    <tr className="bg-neutral-dark/30 text-[10px] font-semibold uppercase text-secondary-text">
-                      <th className="border-b border-r border-panel-border px-4 py-2">Date / Time</th>
-                      <th className="border-b border-r border-panel-border px-4 py-2">Order ID</th>
-                      <th className="border-b border-r border-panel-border px-4 py-2">
-                        <div className="flex items-center gap-2">
-                          <span>Symbol</span>
-                          <select
-                            className="h-6 border border-panel-border bg-transparent px-1.5 text-[9px] font-bold uppercase text-white outline-none"
-                            id="symbol-filter-orders"
-                            onChange={(event) => {
-                              setSymbolFilter(event.target.value)
-                              setPage(1)
-                            }}
-                            value={symbolFilter}
-                          >
-                            {selectableSymbols.map((symbol) => (
-                              <option key={symbol} value={symbol}>
-                                {symbol === 'ALL' ? 'All' : symbol}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </th>
-                      <th className="border-b border-r border-panel-border px-4 py-2">Side</th>
-                      <th className="border-b border-r border-panel-border px-4 py-2">Type</th>
-                      <th className="border-b border-r border-panel-border px-4 py-2">TIF</th>
-                      <th className="border-b border-r border-panel-border px-4 py-2 text-right">Size</th>
-                      <th className="border-b border-r border-panel-border px-4 py-2 text-right">Filled</th>
-                      <th className="border-b border-r border-panel-border px-4 py-2 text-right">Price</th>
-                      <th className="border-b border-panel-border px-4 py-2">
-                        <div className="flex items-center gap-2">
-                          <span>Status</span>
-                          <select
-                            className="h-6 border border-panel-border bg-transparent px-1.5 text-[9px] font-bold uppercase text-white outline-none"
-                            id="order-status-filter"
-                            onChange={(event) => {
-                              setOrderStatusFilter(event.target.value)
-                              setPage(1)
-                            }}
-                            value={orderStatusFilter}
-                          >
-                            <option value="ALL">All</option>
-                            <option value="OPEN">Open</option>
-                            <option value="FILLED">Filled</option>
-                            <option value="CANCELED">Canceled</option>
-                          </select>
-                        </div>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-neutral-dark">
-                    {paginatedRows.map((order) => (
-                      <tr className="group transition-colors hover:bg-neutral-dark/10" key={order.id}>
-                        <td className="mono px-4 py-2 text-secondary-text">{order.dateTimeLabel}</td>
-                        <td className="mono px-4 py-2 text-white">{order.orderId}</td>
-                        <td className="px-4 py-2 font-bold uppercase tracking-tight text-white">{order.symbol}</td>
-                        <td className="px-4 py-2">
-                          <span
-                            className={`inline-flex px-1.5 py-0.5 text-[9px] font-bold ${order.side === 'LONG'
-                              ? 'border border-success/20 bg-success/10 text-success'
-                              : 'border border-danger/20 bg-danger/10 text-danger'
-                              }`}
-                          >
-                            {order.side}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2 text-[10px] font-medium uppercase text-secondary-text">{order.type}</td>
-                        <td className="mono px-4 py-2 text-white">{order.timeInForce}</td>
-                        <td className="mono px-4 py-2 text-right text-white">{formatTradeSize(order.size, order.baseAsset, order.sizeDigits)}</td>
-                        <td className="mono px-4 py-2 text-right text-white">{formatTradeSize(order.filledSize, order.baseAsset, order.sizeDigits)}</td>
-                        <td className="mono px-4 py-2 text-right text-white">{formatPrice(order.price)}</td>
-                        <td className="px-4 py-2">
-                          <span
-                            className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-bold ${
-                              order.status === 'OPEN'
-                                ? 'border border-primary/40 bg-primary/10 text-primary'
-                                : order.status === 'FILLED'
-                                  ? 'border border-success/20 bg-success/10 text-success'
-                                  : 'border border-danger/20 bg-danger/10 text-danger'
-                            }`}
-                          >
-                            <span className="size-1 rounded-full bg-current" />
-                            {order.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ) : (
-                <table className="w-full min-w-[980px] text-left text-xs">
-                  <thead>
-                    <tr className="bg-neutral-dark/30 text-[10px] font-semibold uppercase text-secondary-text">
-                      <th className="border-b border-r border-panel-border px-4 py-2">Date / Time</th>
-                      <th className="border-b border-r border-panel-border px-4 py-2">Transfer ID</th>
-                      <th className="border-b border-r border-panel-border px-4 py-2">Type</th>
-                      <th className="border-b border-r border-panel-border px-4 py-2">Asset</th>
-                      <th className="border-b border-r border-panel-border px-4 py-2 text-right">Amount</th>
-                      <th className="border-b border-panel-border px-4 py-2">
-                        <div className="flex items-center gap-2">
-                          <span>Status</span>
-                          <select
-                            className="h-6 border border-panel-border bg-transparent px-1.5 text-[9px] font-bold uppercase text-white outline-none"
-                            id="transfer-status-filter"
-                            onChange={(event) => {
-                              setTransferStatusFilter(event.target.value)
-                              setPage(1)
-                            }}
-                            value={transferStatusFilter}
-                          >
-                            <option value="ALL">All</option>
-                            <option value="COMPLETED">Completed</option>
-                            <option value="PENDING">Pending</option>
-                            <option value="FAILED">Failed</option>
-                          </select>
-                        </div>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-neutral-dark">
-                    {paginatedRows.map((transfer) => (
-                      <tr className="group transition-colors hover:bg-neutral-dark/10" key={transfer.id}>
-                        <td className="mono px-4 py-2 text-secondary-text">{transfer.dateTimeLabel}</td>
-                        <td className="mono px-4 py-2 text-white">{transfer.transferId}</td>
-                        <td className="px-4 py-2">
-                          <span
-                            className={`inline-flex px-1.5 py-0.5 text-[9px] font-bold ${
-                              transfer.type === 'DEPOSIT'
-                                ? 'border border-success/20 bg-success/10 text-success'
-                                : 'border border-danger/20 bg-danger/10 text-danger'
-                            }`}
-                          >
-                            {transfer.type}
-                          </span>
-                        </td>
-                        <td className="mono px-4 py-2 text-white">{transfer.asset}</td>
-                        <td className={`mono px-4 py-2 text-right font-bold ${transfer.type === 'DEPOSIT' ? 'text-success' : 'text-danger'}`}>
-                          {transfer.type === 'DEPOSIT' ? '+' : '-'}
-                          {formatFee(transfer.amount)}
-                        </td>
-                        <td className="px-4 py-2">
-                          <span
-                            className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-bold ${
-                              transfer.status === 'COMPLETED'
-                                ? 'border border-success/20 bg-success/10 text-success'
-                                : transfer.status === 'PENDING'
-                                  ? 'border border-primary/40 bg-primary/10 text-primary'
-                                  : 'border border-danger/20 bg-danger/10 text-danger'
-                            }`}
-                          >
-                            <span className="size-1 rounded-full bg-current" />
-                            {transfer.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-
-            <div className="mt-auto flex items-center justify-between border-t border-panel-border bg-neutral-dark/5 px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-secondary-text">
-              <div className="flex items-center gap-4">
-                <a
-                  aria-label="Deriverse on X"
-                  className="inline-flex items-center text-secondary-text transition-colors hover:text-white"
-                  href="https://x.com/deriverse_io"
-                  rel="noopener noreferrer"
-                  target="_blank"
-                >
-                  <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M18.244 2H21.5l-7.11 8.126L22.75 22h-6.54l-5.12-6.692L5.23 22H1.97l7.606-8.696L1.5 2h6.706l4.628 6.104L18.244 2Zm-1.142 18h1.804L7.23 3.894H5.294L17.102 20Z" />
-                  </svg>
-                </a>
-                <a
-                  className="text-[9px] text-secondary-text transition-colors hover:text-white"
-                  href="https://deriverse.gitbook.io/deriverse-v1"
-                  rel="noopener noreferrer"
-                  target="_blank"
-                >
-                  Docs
-                </a>
-                <span>
-                  Showing {visibleStart}-{visibleEnd} of {activeRows.length} {activeRowsLabel}
-                </span>
-                {activeStatusFilter !== 'ALL' && (
-                  <span className="text-[9px] text-secondary-text/80">
-                    ({activeStatusFilter.toLowerCase()} from {activeScopedCount} scoped)
-                  </span>
-                )}
-                <span className="text-[9px] text-secondary-text/80">Range: {dashboard.periodLabel}</span>
-                <div className="flex items-center gap-1">
-                  <span className="size-1.5 rounded-full bg-success" />
-                  <span className="text-[9px]">Live Synced</span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-4">
-                <label className="flex items-center gap-2 text-[10px] font-bold uppercase text-secondary-text" htmlFor="rows-per-page">
-                  Rows
-                  <select
-                    className="h-7 border border-panel-border bg-background-dark px-2 text-[10px] font-bold uppercase text-white outline-none"
-                    id="rows-per-page"
-                    onChange={(event) => {
-                      setPageSize(Number(event.target.value))
-                      setPage(1)
-                    }}
-                    value={pageSize}
-                  >
-                    <option value={10}>10</option>
-                    <option value={25}>25</option>
-                    <option value={50}>50</option>
-                  </select>
-                </label>
-                <button
-                  className="transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={currentPage === 1}
-                  onClick={() => setPage(1)}
-                  type="button"
-                >
-                  Start
-                </button>
-                <button
-                  className="transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={currentPage === 1}
-                  onClick={() => setPage((current) => Math.max(1, current - 1))}
-                  type="button"
-                >
-                  Previous
-                </button>
-                <div className="flex items-center gap-2">
-                  {paginationItems.map((item) =>
-                    typeof item === 'string' ? (
-                      <span className="text-secondary-text/70" key={item}>
-                        ...
-                      </span>
-                    ) : (
-                      <button
-                        className={item === currentPage ? 'border-b border-white text-white' : 'cursor-pointer hover:text-white'}
-                        key={`page-${item}`}
-                        onClick={() => setPage(item)}
-                        type="button"
-                      >
-                        {String(item).padStart(2, '0')}
-                      </button>
-                    ),
-                  )}
-                </div>
-                <button
-                  className="transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={currentPage === pageCount}
-                  onClick={() => setPage((current) => Math.min(pageCount, current + 1))}
-                  type="button"
-                >
-                  Next
-                </button>
-                <button
-                  className="transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={currentPage === pageCount}
-                  onClick={() => setPage(pageCount)}
-                  type="button"
-                >
-                  End
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <DataTable
+          activeRowsLabel={activeRowsLabel}
+          activeRowsLength={activeRows.length}
+          activeScopedCount={activeScopedCount}
+          activeStatusFilter={activeStatusFilter}
+          annotationMap={annotationMap}
+          chatgptPrefillUrl={chatgptPrefillUrl}
+          claudePrefillUrl={claudePrefillUrl}
+          currentPage={currentPage}
+          dashboardPeriodLabel={dashboard.periodLabel}
+          onEditNote={handleEditNote}
+          onExportCsv={handleExportCsv}
+          onExportPdf={handleExportPdf}
+          onOrderStatusFilterChange={(value) => {
+            setOrderStatusFilter(value)
+            setPage(1)
+          }}
+          onPageChange={setPage}
+          onPageSizeChange={(value) => {
+            setPageSize(value)
+            setPage(1)
+          }}
+          onStatusFilterChange={(value) => {
+            setStatusFilter(value)
+            setPage(1)
+          }}
+          onSymbolFilterChange={(value) => {
+            setSymbolFilter(value)
+            setPage(1)
+          }}
+          onTableViewChange={(value) => {
+            setTableView(value)
+            setPage(1)
+          }}
+          onTransferStatusFilterChange={(value) => {
+            setTransferStatusFilter(value)
+            setPage(1)
+          }}
+          orderStatusFilter={orderStatusFilter}
+          pageCount={pageCount}
+          pageSize={pageSize}
+          paginatedRows={paginatedRows}
+          paginationItems={paginationItems}
+          selectableSymbols={selectableSymbols}
+          statusFilter={statusFilter}
+          symbolFilter={symbolFilter}
+          tableView={tableView}
+          transferStatusFilter={transferStatusFilter}
+          visibleEnd={visibleEnd}
+          visibleStart={visibleStart}
+        />
       </div>
     </div>
   )
