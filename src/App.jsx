@@ -134,6 +134,26 @@ function getRangeDays(rangePreset) {
   return null
 }
 
+function filterRecordsByDateRange(records, dateKey, startDate, endDate) {
+  return records.filter((record) => {
+    const dateValue = record[dateKey]
+    if (!(dateValue instanceof Date)) {
+      return false
+    }
+
+    const ms = dateValue.getTime()
+    if (startDate && ms < startDate.getTime()) {
+      return false
+    }
+
+    if (endDate && ms > endDate.getTime() + (DAY_IN_MS - 1)) {
+      return false
+    }
+
+    return true
+  })
+}
+
 function formatDurationMinutes(minutes) {
   const safeMinutes = Math.max(0, Number(minutes) || 0)
   const hours = Math.floor(safeMinutes / 60)
@@ -320,8 +340,11 @@ function App() {
   )
 
   const [statusFilter, setStatusFilter] = useState('ALL')
+  const [orderStatusFilter, setOrderStatusFilter] = useState('ALL')
+  const [transferStatusFilter, setTransferStatusFilter] = useState('ALL')
   const [rangePreset, setRangePreset] = useState('ALL')
   const [accountScope, setAccountScope] = useState('ALL')
+  const [tableView, setTableView] = useState('POSITIONS')
   const [pageSize, setPageSize] = useState(10)
   const [page, setPage] = useState(1)
   const [chartView, setChartView] = useState('PERFORMANCE')
@@ -440,7 +463,7 @@ function App() {
     [baseDashboard.startingEquity, chartView, rangeWindow.endInput, rangeWindow.startInput, scopedTrades],
   )
 
-  const filteredTrades = useMemo(() => {
+  const filteredPositions = useMemo(() => {
     if (statusFilter === 'ALL') {
       return scopedTrades
     }
@@ -448,13 +471,49 @@ function App() {
     return scopedTrades.filter((trade) => trade.status === statusFilter)
   }, [scopedTrades, statusFilter])
 
-  const pageCount = Math.max(1, Math.ceil(filteredTrades.length / pageSize))
+  const scopedOrders = useMemo(
+    () => filterRecordsByDateRange(baseDashboard.table.orders, 'createdAt', rangeWindow.startDate, rangeWindow.endDate),
+    [baseDashboard.table.orders, rangeWindow.endDate, rangeWindow.startDate],
+  )
+  const filteredOrders = useMemo(() => {
+    if (orderStatusFilter === 'ALL') {
+      return scopedOrders
+    }
+
+    return scopedOrders.filter((order) => order.status === orderStatusFilter)
+  }, [orderStatusFilter, scopedOrders])
+
+  const scopedTransfers = useMemo(
+    () => filterRecordsByDateRange(baseDashboard.table.transfers, 'occurredAt', rangeWindow.startDate, rangeWindow.endDate),
+    [baseDashboard.table.transfers, rangeWindow.endDate, rangeWindow.startDate],
+  )
+  const filteredTransfers = useMemo(() => {
+    if (transferStatusFilter === 'ALL') {
+      return scopedTransfers
+    }
+
+    return scopedTransfers.filter((transfer) => transfer.status === transferStatusFilter)
+  }, [scopedTransfers, transferStatusFilter])
+
+  const activeRows = useMemo(() => {
+    if (tableView === 'ORDERS') {
+      return filteredOrders
+    }
+
+    if (tableView === 'TRANSFERS') {
+      return filteredTransfers
+    }
+
+    return filteredPositions
+  }, [filteredOrders, filteredPositions, filteredTransfers, tableView])
+  const activeRowsLabel = tableView === 'ORDERS' ? 'Orders' : tableView === 'TRANSFERS' ? 'Transfers' : 'Positions'
+  const pageCount = Math.max(1, Math.ceil(activeRows.length / pageSize))
   const currentPage = Math.min(page, pageCount)
-  const paginatedTrades = useMemo(() => {
+  const paginatedRows = useMemo(() => {
     const start = (currentPage - 1) * pageSize
     const end = start + pageSize
-    return filteredTrades.slice(start, end)
-  }, [currentPage, filteredTrades, pageSize])
+    return activeRows.slice(start, end)
+  }, [activeRows, currentPage, pageSize])
   const paginationItems = buildPaginationItems(pageCount, currentPage)
   const chartLinePath = buildLinePath(dashboard.chart.points, 'lineValue')
   const accountEquityLinePath = buildLinePath(dashboard.chart.points, 'secondaryLineValue')
@@ -475,8 +534,10 @@ function App() {
     ? (mapValueToRange(hoveredChartPoint.lineValue, lineMin, lineMax, LINE_TOP, LINE_BOTTOM) / CHART_HEIGHT) * 100
     : 0
   const [startLabel, midLabel, endLabel] = dashboard.chart.xLabels
-  const visibleStart = filteredTrades.length === 0 ? 0 : (currentPage - 1) * pageSize + 1
-  const visibleEnd = filteredTrades.length === 0 ? 0 : visibleStart + paginatedTrades.length - 1
+  const visibleStart = activeRows.length === 0 ? 0 : (currentPage - 1) * pageSize + 1
+  const visibleEnd = activeRows.length === 0 ? 0 : visibleStart + paginatedRows.length - 1
+  const activeScopedCount = tableView === 'ORDERS' ? scopedOrders.length : tableView === 'TRANSFERS' ? scopedTransfers.length : scopedTrades.length
+  const activeStatusFilter = tableView === 'ORDERS' ? orderStatusFilter : tableView === 'TRANSFERS' ? transferStatusFilter : statusFilter
 
   const accountScopeSummary = useMemo(
     () => buildScopeSummary({ trades: accountScopeTrades, startingEquity: baseDashboard.startingEquity }),
@@ -844,20 +905,52 @@ function App() {
   }
 
   function handleExportCsv() {
-    const header = ['Date Time', 'Symbol', 'Status', 'Side', 'Type', 'Size', 'Entry', 'Exit', 'PnL', 'Fee', 'Annotation']
-    const rows = filteredTrades.map((trade) => [
-      trade.dateTimeLabel,
-      trade.symbol,
-      trade.status,
-      trade.side,
-      trade.type,
-      `${trade.size} ${trade.baseAsset}`,
-      trade.entry,
-      trade.exit,
-      trade.pnl,
-      trade.fee,
-      annotationMap[trade.id] ?? trade.annotation ?? '',
-    ])
+    let header = []
+    let rows = []
+    let scopeLabel = 'positions'
+
+    if (tableView === 'ORDERS') {
+      scopeLabel = 'orders'
+      header = ['Date Time', 'Order ID', 'Symbol', 'Side', 'Type', 'TIF', 'Size', 'Filled', 'Price', 'Status']
+      rows = filteredOrders.map((order) => [
+        order.dateTimeLabel,
+        order.orderId,
+        order.symbol,
+        order.side,
+        order.type,
+        order.timeInForce,
+        `${order.size} ${order.baseAsset}`,
+        `${order.filledSize} ${order.baseAsset}`,
+        order.price,
+        order.status,
+      ])
+    } else if (tableView === 'TRANSFERS') {
+      scopeLabel = 'transfers'
+      header = ['Date Time', 'Transfer ID', 'Type', 'Asset', 'Amount', 'Status']
+      rows = filteredTransfers.map((transfer) => [
+        transfer.dateTimeLabel,
+        transfer.transferId,
+        transfer.type,
+        transfer.asset,
+        transfer.amount,
+        transfer.status,
+      ])
+    } else {
+      header = ['Date Time', 'Symbol', 'Status', 'Side', 'Type', 'Size', 'Entry', 'Exit', 'PnL', 'Fee', 'Annotation']
+      rows = filteredPositions.map((trade) => [
+        trade.dateTimeLabel,
+        trade.symbol,
+        trade.status,
+        trade.side,
+        trade.type,
+        `${trade.size} ${trade.baseAsset}`,
+        trade.entry,
+        trade.exit,
+        trade.pnl,
+        trade.fee,
+        annotationMap[trade.id] ?? trade.annotation ?? '',
+      ])
+    }
 
     const csv = [header, ...rows]
       .map((row) => row.map((value) => escapeCsv(value)).join(','))
@@ -865,7 +958,7 @@ function App() {
 
     const now = new Date()
     const stamp = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, '0')}${String(now.getUTCDate()).padStart(2, '0')}`
-    downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8;' }), `deriverse-trades-${stamp}.csv`)
+    downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8;' }), `deriverse-${scopeLabel}-${stamp}.csv`)
   }
 
   function handleExportPdf() {
@@ -874,31 +967,77 @@ function App() {
       return
     }
 
-    const rows = filteredTrades
-      .map((trade) => {
-        const note = annotationMap[trade.id] ?? trade.annotation ?? '-'
-        return `
+    let heading = 'Positions Export'
+    let headerCells = []
+    let rows = ''
+    let filterLabel = ''
+
+    if (tableView === 'ORDERS') {
+      heading = 'Orders Export'
+      headerCells = ['Date / Time', 'Order ID', 'Symbol', 'Side', 'Type', 'TIF', 'Size', 'Filled', 'Price', 'Status']
+      rows = filteredOrders
+        .map((order) => `
           <tr>
-            <td>${escapeHtml(trade.dateTimeLabel)}</td>
-            <td>${escapeHtml(trade.symbol)}</td>
-            <td>${escapeHtml(trade.status)}</td>
-            <td>${escapeHtml(trade.side)}</td>
-            <td>${escapeHtml(trade.type)}</td>
-            <td>${escapeHtml(formatTradeSize(trade.size, trade.baseAsset, trade.sizeDigits))}</td>
-            <td>${escapeHtml(formatPrice(trade.entry))}</td>
-            <td>${escapeHtml(formatPrice(trade.exit))}</td>
-            <td>${escapeHtml(formatSignedPnl(trade.pnl))}</td>
-            <td>${escapeHtml(formatFee(trade.fee))}</td>
-            <td>${escapeHtml(note)}</td>
+            <td>${escapeHtml(order.dateTimeLabel)}</td>
+            <td>${escapeHtml(order.orderId)}</td>
+            <td>${escapeHtml(order.symbol)}</td>
+            <td>${escapeHtml(order.side)}</td>
+            <td>${escapeHtml(order.type)}</td>
+            <td>${escapeHtml(order.timeInForce)}</td>
+            <td>${escapeHtml(formatTradeSize(order.size, order.baseAsset, order.sizeDigits))}</td>
+            <td>${escapeHtml(formatTradeSize(order.filledSize, order.baseAsset, order.sizeDigits))}</td>
+            <td>${escapeHtml(formatPrice(order.price))}</td>
+            <td>${escapeHtml(order.status)}</td>
           </tr>
-        `
-      })
-      .join('')
+        `)
+        .join('')
+      filterLabel = orderStatusFilter
+    } else if (tableView === 'TRANSFERS') {
+      heading = 'Deposits / Withdrawals Export'
+      headerCells = ['Date / Time', 'Transfer ID', 'Type', 'Asset', 'Amount', 'Status']
+      rows = filteredTransfers
+        .map((transfer) => `
+          <tr>
+            <td>${escapeHtml(transfer.dateTimeLabel)}</td>
+            <td>${escapeHtml(transfer.transferId)}</td>
+            <td>${escapeHtml(transfer.type)}</td>
+            <td>${escapeHtml(transfer.asset)}</td>
+            <td>${escapeHtml(formatFee(transfer.amount))}</td>
+            <td>${escapeHtml(transfer.status)}</td>
+          </tr>
+        `)
+        .join('')
+      filterLabel = transferStatusFilter
+    } else {
+      headerCells = ['Date / Time', 'Symbol', 'Status', 'Side', 'Type', 'Size', 'Entry', 'Exit', 'PnL', 'Fee', 'Note']
+      rows = filteredPositions
+        .map((trade) => {
+          const note = annotationMap[trade.id] ?? trade.annotation ?? '-'
+          return `
+            <tr>
+              <td>${escapeHtml(trade.dateTimeLabel)}</td>
+              <td>${escapeHtml(trade.symbol)}</td>
+              <td>${escapeHtml(trade.status)}</td>
+              <td>${escapeHtml(trade.side)}</td>
+              <td>${escapeHtml(trade.type)}</td>
+              <td>${escapeHtml(formatTradeSize(trade.size, trade.baseAsset, trade.sizeDigits))}</td>
+              <td>${escapeHtml(formatPrice(trade.entry))}</td>
+              <td>${escapeHtml(formatPrice(trade.exit))}</td>
+              <td>${escapeHtml(formatSignedPnl(trade.pnl))}</td>
+              <td>${escapeHtml(formatFee(trade.fee))}</td>
+              <td>${escapeHtml(note)}</td>
+            </tr>
+          `
+        })
+        .join('')
+      filterLabel = statusFilter
+    }
+    const tableHeaderHtml = headerCells.map((cell) => `<th>${escapeHtml(cell)}</th>`).join('')
 
     const documentHtml = `
       <html>
         <head>
-          <title>Deriverse Trade Export</title>
+          <title>Deriverse Export</title>
           <style>
             body { font-family: Arial, sans-serif; padding: 24px; color: #111; }
             h1 { margin: 0 0 4px; }
@@ -909,24 +1048,12 @@ function App() {
           </style>
         </head>
         <body>
-          <h1>Deriverse Analytics Export</h1>
+          <h1>${escapeHtml(heading)}</h1>
           <p>Period: ${escapeHtml(dashboard.periodLabel)}</p>
-          <p>Filters: ${escapeHtml(rangePreset)} | ${escapeHtml(statusFilter)} | ${escapeHtml(filteredTrades.length)} trades</p>
+          <p>Filters: ${escapeHtml(rangePreset)} | ${escapeHtml(filterLabel)} | ${escapeHtml(activeRows.length)} rows</p>
           <table>
             <thead>
-              <tr>
-                <th>Date / Time</th>
-                <th>Symbol</th>
-                <th>Status</th>
-                <th>Side</th>
-                <th>Type</th>
-                <th>Size</th>
-                <th>Entry</th>
-                <th>Exit</th>
-                <th>PnL</th>
-                <th>Fee</th>
-                <th>Note</th>
-              </tr>
+              <tr>${tableHeaderHtml}</tr>
             </thead>
             <tbody>${rows}</tbody>
           </table>
@@ -1408,7 +1535,31 @@ function App() {
 
         <div className="flex-1 overflow-hidden p-0">
           <div className="flex h-full flex-col bg-background-dark">
-            <div className="flex items-center justify-end border-b border-panel-border px-4 py-2">
+            <div className="flex items-center justify-between border-b border-panel-border px-4 py-2">
+              <div className="flex items-center gap-2">
+                {[
+                  { id: 'POSITIONS', label: 'Positions' },
+                  { id: 'ORDERS', label: 'Orders' },
+                  { id: 'TRANSFERS', label: 'Deposits/Withdrawals' },
+                ].map((option) => (
+                  <button
+                    className={`h-7 border px-3 text-[10px] font-bold uppercase transition-colors ${
+                      tableView === option.id
+                        ? 'border-primary/50 bg-primary/10 text-primary'
+                        : 'border-panel-border text-secondary-text hover:text-white'
+                    }`}
+                    key={option.id}
+                    onClick={() => {
+                      setTableView(option.id)
+                      setPage(1)
+                    }}
+                    type="button"
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-bold uppercase text-secondary-text">Ask AI</span>
                 <a
@@ -1432,7 +1583,7 @@ function App() {
                   Export
                   <select
                     className="h-7 border border-panel-border bg-background-dark px-2 text-[10px] font-bold uppercase text-white outline-none disabled:cursor-not-allowed disabled:opacity-40"
-                    disabled={filteredTrades.length === 0}
+                    disabled={activeRows.length === 0}
                     id="export-menu"
                     onChange={(event) => {
                       if (event.target.value === 'CSV') {
@@ -1456,107 +1607,249 @@ function App() {
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1280px] text-left text-xs">
-                <thead>
-                  <tr className="bg-neutral-dark/30 text-[10px] font-semibold uppercase text-secondary-text">
-                    <th className="border-b border-r border-panel-border px-4 py-2">Date / Time</th>
-                    <th className="border-b border-r border-panel-border px-4 py-2">Symbol</th>
-                    <th className="border-b border-r border-panel-border px-4 py-2">
-                      <div className="flex items-center gap-2">
-                        <span>Status</span>
-                        <select
-                          className="h-6 border border-panel-border bg-transparent px-1.5 text-[9px] font-bold uppercase text-white outline-none"
-                          id="status-filter"
-                          onChange={(event) => {
-                            setStatusFilter(event.target.value)
-                            setPage(1)
-                          }}
-                          value={statusFilter}
-                        >
-                          <option value="ALL">All</option>
-                          <option value="OPEN">Open</option>
-                          <option value="CLOSED">Closed</option>
-                        </select>
-                      </div>
-                    </th>
-                    <th className="border-b border-r border-panel-border px-4 py-2">Side</th>
-                    <th className="border-b border-r border-panel-border px-4 py-2">Type</th>
-                    <th className="border-b border-r border-panel-border px-4 py-2 text-right">Size</th>
-                    <th className="border-b border-r border-panel-border px-4 py-2 text-right">Entry</th>
-                    <th className="border-b border-r border-panel-border px-4 py-2 text-right">Exit</th>
-                    <th className="border-b border-r border-panel-border px-4 py-2 text-right">PnL</th>
-                    <th className="border-b border-r border-panel-border px-4 py-2 text-right">Fee</th>
-                    <th className="border-b border-panel-border px-4 py-2 text-center">Notes</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-neutral-dark">
-                  {paginatedTrades.map((trade) => {
-                    const noteText = annotationMap[trade.id] ?? trade.annotation ?? ''
-                    return (
-                      <tr className="group transition-colors hover:bg-neutral-dark/10" key={trade.id}>
-                        <td className="mono px-4 py-2 text-secondary-text">{trade.dateTimeLabel}</td>
-                        <td className="px-4 py-2 font-bold uppercase tracking-tight text-white">{trade.symbol}</td>
-                        <td className="px-4 py-2">
-                          <span
-                            className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-bold ${trade.status === 'OPEN'
-                              ? 'border border-primary/40 bg-primary/10 text-primary'
-                              : 'border border-secondary-text/30 bg-neutral-dark/40 text-secondary-text'
-                              }`}
+              {tableView === 'POSITIONS' ? (
+                <table className="w-full min-w-[1280px] text-left text-xs">
+                  <thead>
+                    <tr className="bg-neutral-dark/30 text-[10px] font-semibold uppercase text-secondary-text">
+                      <th className="border-b border-r border-panel-border px-4 py-2">Date / Time</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2">Symbol</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2">
+                        <div className="flex items-center gap-2">
+                          <span>Status</span>
+                          <select
+                            className="h-6 border border-panel-border bg-transparent px-1.5 text-[9px] font-bold uppercase text-white outline-none"
+                            id="status-filter"
+                            onChange={(event) => {
+                              setStatusFilter(event.target.value)
+                              setPage(1)
+                            }}
+                            value={statusFilter}
                           >
-                            <span className="size-1 rounded-full bg-current" />
-                            {trade.status}
-                          </span>
-                        </td>
+                            <option value="ALL">All</option>
+                            <option value="OPEN">Open</option>
+                            <option value="CLOSED">Closed</option>
+                          </select>
+                        </div>
+                      </th>
+                      <th className="border-b border-r border-panel-border px-4 py-2">Side</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2">Type</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2 text-right">Size</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2 text-right">Entry</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2 text-right">Exit</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2 text-right">PnL</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2 text-right">Fee</th>
+                      <th className="border-b border-panel-border px-4 py-2 text-center">Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-dark">
+                    {paginatedRows.map((trade) => {
+                      const noteText = annotationMap[trade.id] ?? trade.annotation ?? ''
+                      return (
+                        <tr className="group transition-colors hover:bg-neutral-dark/10" key={trade.id}>
+                          <td className="mono px-4 py-2 text-secondary-text">{trade.dateTimeLabel}</td>
+                          <td className="px-4 py-2 font-bold uppercase tracking-tight text-white">{trade.symbol}</td>
+                          <td className="px-4 py-2">
+                            <span
+                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-bold ${trade.status === 'OPEN'
+                                ? 'border border-primary/40 bg-primary/10 text-primary'
+                                : 'border border-secondary-text/30 bg-neutral-dark/40 text-secondary-text'
+                                }`}
+                            >
+                              <span className="size-1 rounded-full bg-current" />
+                              {trade.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2">
+                            <span
+                              className={`inline-flex px-1.5 py-0.5 text-[9px] font-bold ${trade.side === 'LONG'
+                                ? 'border border-success/20 bg-success/10 text-success'
+                                : 'border border-danger/20 bg-danger/10 text-danger'
+                                }`}
+                            >
+                              {trade.side}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2 text-[10px] font-medium uppercase text-secondary-text">{trade.type}</td>
+                          <td className="mono px-4 py-2 text-right text-white">
+                            {formatTradeSize(trade.size, trade.baseAsset, trade.sizeDigits)}
+                          </td>
+                          <td className="mono px-4 py-2 text-right text-white">{formatPrice(trade.entry)}</td>
+                          <td className="mono px-4 py-2 text-right text-white">{formatPrice(trade.exit)}</td>
+                          <td className={`mono px-4 py-2 text-right font-bold ${trade.pnl >= 0 ? 'text-success' : 'text-danger'}`}>
+                            {formatSignedPnl(trade.pnl)}
+                          </td>
+                          <td className="mono px-4 py-2 text-right text-secondary-text">{formatFee(trade.fee)}</td>
+                          <td className="px-4 py-2 text-center">
+                            <button
+                              className={`h-6 border px-3 text-[10px] font-bold uppercase transition-colors ${trade.status === 'OPEN'
+                                ? 'border-primary/40 text-primary hover:border-primary'
+                                : 'border-panel-border text-secondary-text hover:border-secondary-text/50 hover:text-white'
+                                }`}
+                              onClick={() => handleEditNote(trade)}
+                              title={noteText || 'No note yet'}
+                              type="button"
+                            >
+                              {trade.status === 'OPEN' ? 'Edit Open Note' : noteText ? 'Edit Note' : 'Add Note'}
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              ) : tableView === 'ORDERS' ? (
+                <table className="w-full min-w-[1120px] text-left text-xs">
+                  <thead>
+                    <tr className="bg-neutral-dark/30 text-[10px] font-semibold uppercase text-secondary-text">
+                      <th className="border-b border-r border-panel-border px-4 py-2">Date / Time</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2">Order ID</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2">Symbol</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2">Side</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2">Type</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2">TIF</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2 text-right">Size</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2 text-right">Filled</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2 text-right">Price</th>
+                      <th className="border-b border-panel-border px-4 py-2">
+                        <div className="flex items-center gap-2">
+                          <span>Status</span>
+                          <select
+                            className="h-6 border border-panel-border bg-transparent px-1.5 text-[9px] font-bold uppercase text-white outline-none"
+                            id="order-status-filter"
+                            onChange={(event) => {
+                              setOrderStatusFilter(event.target.value)
+                              setPage(1)
+                            }}
+                            value={orderStatusFilter}
+                          >
+                            <option value="ALL">All</option>
+                            <option value="OPEN">Open</option>
+                            <option value="FILLED">Filled</option>
+                            <option value="CANCELED">Canceled</option>
+                          </select>
+                        </div>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-dark">
+                    {paginatedRows.map((order) => (
+                      <tr className="group transition-colors hover:bg-neutral-dark/10" key={order.id}>
+                        <td className="mono px-4 py-2 text-secondary-text">{order.dateTimeLabel}</td>
+                        <td className="mono px-4 py-2 text-white">{order.orderId}</td>
+                        <td className="px-4 py-2 font-bold uppercase tracking-tight text-white">{order.symbol}</td>
                         <td className="px-4 py-2">
                           <span
-                            className={`inline-flex px-1.5 py-0.5 text-[9px] font-bold ${trade.side === 'LONG'
+                            className={`inline-flex px-1.5 py-0.5 text-[9px] font-bold ${order.side === 'LONG'
                               ? 'border border-success/20 bg-success/10 text-success'
                               : 'border border-danger/20 bg-danger/10 text-danger'
                               }`}
                           >
-                            {trade.side}
+                            {order.side}
                           </span>
                         </td>
-                        <td className="px-4 py-2 text-[10px] font-medium uppercase text-secondary-text">{trade.type}</td>
-                        <td className="mono px-4 py-2 text-right text-white">
-                          {formatTradeSize(trade.size, trade.baseAsset, trade.sizeDigits)}
-                        </td>
-                        <td className="mono px-4 py-2 text-right text-white">{formatPrice(trade.entry)}</td>
-                        <td className="mono px-4 py-2 text-right text-white">{formatPrice(trade.exit)}</td>
-                        <td
-                          className={`mono px-4 py-2 text-right font-bold ${trade.pnl >= 0 ? 'text-success' : 'text-danger'}`}
-                        >
-                          {formatSignedPnl(trade.pnl)}
-                        </td>
-                        <td className="mono px-4 py-2 text-right text-secondary-text">{formatFee(trade.fee)}</td>
-                        <td className="px-4 py-2 text-center">
-                          <button
-                            className={`h-6 border px-3 text-[10px] font-bold uppercase transition-colors ${trade.status === 'OPEN'
-                              ? 'border-primary/40 text-primary hover:border-primary'
-                              : 'border-panel-border text-secondary-text hover:border-secondary-text/50 hover:text-white'
-                              }`}
-                            onClick={() => handleEditNote(trade)}
-                            title={noteText || 'No note yet'}
-                            type="button"
+                        <td className="px-4 py-2 text-[10px] font-medium uppercase text-secondary-text">{order.type}</td>
+                        <td className="mono px-4 py-2 text-white">{order.timeInForce}</td>
+                        <td className="mono px-4 py-2 text-right text-white">{formatTradeSize(order.size, order.baseAsset, order.sizeDigits)}</td>
+                        <td className="mono px-4 py-2 text-right text-white">{formatTradeSize(order.filledSize, order.baseAsset, order.sizeDigits)}</td>
+                        <td className="mono px-4 py-2 text-right text-white">{formatPrice(order.price)}</td>
+                        <td className="px-4 py-2">
+                          <span
+                            className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-bold ${
+                              order.status === 'OPEN'
+                                ? 'border border-primary/40 bg-primary/10 text-primary'
+                                : order.status === 'FILLED'
+                                  ? 'border border-success/20 bg-success/10 text-success'
+                                  : 'border border-danger/20 bg-danger/10 text-danger'
+                            }`}
                           >
-                            {trade.status === 'OPEN' ? 'Edit Open Note' : noteText ? 'Edit Note' : 'Add Note'}
-                          </button>
+                            <span className="size-1 rounded-full bg-current" />
+                            {order.status}
+                          </span>
                         </td>
                       </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <table className="w-full min-w-[980px] text-left text-xs">
+                  <thead>
+                    <tr className="bg-neutral-dark/30 text-[10px] font-semibold uppercase text-secondary-text">
+                      <th className="border-b border-r border-panel-border px-4 py-2">Date / Time</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2">Transfer ID</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2">Type</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2">Asset</th>
+                      <th className="border-b border-r border-panel-border px-4 py-2 text-right">Amount</th>
+                      <th className="border-b border-panel-border px-4 py-2">
+                        <div className="flex items-center gap-2">
+                          <span>Status</span>
+                          <select
+                            className="h-6 border border-panel-border bg-transparent px-1.5 text-[9px] font-bold uppercase text-white outline-none"
+                            id="transfer-status-filter"
+                            onChange={(event) => {
+                              setTransferStatusFilter(event.target.value)
+                              setPage(1)
+                            }}
+                            value={transferStatusFilter}
+                          >
+                            <option value="ALL">All</option>
+                            <option value="COMPLETED">Completed</option>
+                            <option value="PENDING">Pending</option>
+                            <option value="FAILED">Failed</option>
+                          </select>
+                        </div>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-dark">
+                    {paginatedRows.map((transfer) => (
+                      <tr className="group transition-colors hover:bg-neutral-dark/10" key={transfer.id}>
+                        <td className="mono px-4 py-2 text-secondary-text">{transfer.dateTimeLabel}</td>
+                        <td className="mono px-4 py-2 text-white">{transfer.transferId}</td>
+                        <td className="px-4 py-2">
+                          <span
+                            className={`inline-flex px-1.5 py-0.5 text-[9px] font-bold ${
+                              transfer.type === 'DEPOSIT'
+                                ? 'border border-success/20 bg-success/10 text-success'
+                                : 'border border-danger/20 bg-danger/10 text-danger'
+                            }`}
+                          >
+                            {transfer.type}
+                          </span>
+                        </td>
+                        <td className="mono px-4 py-2 text-white">{transfer.asset}</td>
+                        <td className={`mono px-4 py-2 text-right font-bold ${transfer.type === 'DEPOSIT' ? 'text-success' : 'text-danger'}`}>
+                          {transfer.type === 'DEPOSIT' ? '+' : '-'}
+                          {formatFee(transfer.amount)}
+                        </td>
+                        <td className="px-4 py-2">
+                          <span
+                            className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-bold ${
+                              transfer.status === 'COMPLETED'
+                                ? 'border border-success/20 bg-success/10 text-success'
+                                : transfer.status === 'PENDING'
+                                  ? 'border border-primary/40 bg-primary/10 text-primary'
+                                  : 'border border-danger/20 bg-danger/10 text-danger'
+                            }`}
+                          >
+                            <span className="size-1 rounded-full bg-current" />
+                            {transfer.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
 
             <div className="mt-auto flex items-center justify-between border-t border-panel-border bg-neutral-dark/5 px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-secondary-text">
               <div className="flex items-center gap-4">
                 <span>
-                  Showing {visibleStart}-{visibleEnd} of {filteredTrades.length} Trades
+                  Showing {visibleStart}-{visibleEnd} of {activeRows.length} {activeRowsLabel}
                 </span>
-                {statusFilter !== 'ALL' && (
+                {activeStatusFilter !== 'ALL' && (
                   <span className="text-[9px] text-secondary-text/80">
-                    ({statusFilter.toLowerCase()} from {scopedTrades.length} scoped)
+                    ({activeStatusFilter.toLowerCase()} from {activeScopedCount} scoped)
                   </span>
                 )}
                 <span className="text-[9px] text-secondary-text/80">Range: {dashboard.periodLabel}</span>

@@ -47,6 +47,9 @@ const SYMBOLS = [
 ]
 
 const ORDER_TYPES = ['Market', 'Limit']
+const ORDER_STATUSES = ['OPEN', 'FILLED', 'CANCELED']
+const TRANSFER_TYPES = ['DEPOSIT', 'WITHDRAWAL']
+const TRANSFER_STATUSES = ['COMPLETED', 'PENDING', 'FAILED']
 const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const HEATMAP_SLOTS = ['00-03', '04-07', '08-11', '12-15', '16-19', '20-23']
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -229,6 +232,89 @@ function buildTrades({ year, monthIndex, totalTrades, seed }) {
     status: index < openCount ? 'OPEN' : 'CLOSED',
     annotation: index % 13 === 0 ? 'Scale entry and monitor fee impact before adding size.' : '',
   }))
+}
+
+function buildOrders({ trades, seed }) {
+  const rng = createSeededRng(seed ^ 0x1f2e3d4c)
+  const sortedByEntry = trades
+    .slice()
+    .sort((a, b) => b.entryAt.getTime() - a.entryAt.getTime())
+    .slice(0, Math.min(96, trades.length))
+
+  const openTarget = Math.max(4, Math.round(sortedByEntry.length * 0.14))
+  const canceledTarget = Math.max(3, Math.round(sortedByEntry.length * 0.1))
+
+  return sortedByEntry.map((trade, index) => {
+    let status = 'FILLED'
+    if (index < openTarget) {
+      status = 'OPEN'
+    } else if (index < openTarget + canceledTarget) {
+      status = 'CANCELED'
+    }
+
+    const limitOffset = randomBetween(rng, -0.0045, 0.0035)
+    const price = toFixedNumber(trade.entry * (1 + limitOffset), 2)
+    const timeInForce = pick(rng, ['GTC', 'IOC', 'FOK'])
+    const filledRatio = status === 'FILLED' ? 1 : status === 'CANCELED' ? randomBetween(rng, 0.05, 0.6) : randomBetween(rng, 0, 0.35)
+    const filledSize = toFixedNumber(trade.size * filledRatio, trade.sizeDigits)
+
+    return {
+      id: `order-${trade.id}`,
+      orderId: `DV-${Math.floor(randomBetween(rng, 100000, 999999))}`,
+      symbol: trade.symbol,
+      side: trade.side,
+      type: trade.type,
+      timeInForce,
+      size: trade.size,
+      filledSize,
+      baseAsset: trade.baseAsset,
+      sizeDigits: trade.sizeDigits,
+      price,
+      status,
+      createdAt: trade.entryAt,
+      dateTimeLabel: formatDateTimeUTC(trade.entryAt),
+    }
+  })
+}
+
+function buildTransfers({ trades, seed }) {
+  const rng = createSeededRng(seed ^ 0x0a1b2c3d)
+  const sortedByExitAsc = trades
+    .slice()
+    .sort((a, b) => a.exitAt.getTime() - b.exitAt.getTime())
+
+  if (sortedByExitAsc.length === 0) {
+    return []
+  }
+
+  const minTime = sortedByExitAsc[0].exitAt.getTime()
+  const maxTime = sortedByExitAsc[sortedByExitAsc.length - 1].exitAt.getTime()
+  const totalTransfers = 18
+  const transfers = []
+
+  for (let index = 0; index < totalTransfers; index += 1) {
+    const occurredAt = new Date(Math.floor(randomBetween(rng, minTime, maxTime + 1)))
+    const type = pick(rng, TRANSFER_TYPES)
+    const status = index < 2
+      ? pick(rng, ['PENDING', 'FAILED'])
+      : pick(rng, TRANSFER_STATUSES)
+    const amount = type === 'DEPOSIT'
+      ? toFixedNumber(randomBetween(rng, 350, 9500), 2)
+      : toFixedNumber(randomBetween(rng, 120, 6200), 2)
+
+    transfers.push({
+      id: `transfer-${index + 1}`,
+      transferId: `TX-${Math.floor(randomBetween(rng, 1000000, 9999999))}`,
+      occurredAt,
+      dateTimeLabel: formatDateTimeUTC(occurredAt),
+      type,
+      amount,
+      status,
+      asset: pick(rng, ['USDC', 'USDT', 'SOL']),
+    })
+  }
+
+  return transfers.sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime())
 }
 
 function summarizeTrades({ trades, startingEquity }) {
@@ -693,6 +779,8 @@ export function createDashboardSnapshot({
 export function createDashboardMockData({ year = 2023, monthIndex = 9, totalTrades = 142, seed = 20231001 } = {}) {
   const startingEquity = 35000
   const trades = buildTrades({ year, monthIndex, totalTrades, seed })
+  const orders = buildOrders({ trades, seed })
+  const transfers = buildTransfers({ trades, seed })
   const sortedByTimeAsc = trades.slice().sort((a, b) => a.exitAt.getTime() - b.exitAt.getTime())
   const startDate = sortedByTimeAsc[0].exitAt
   const endDate = sortedByTimeAsc[sortedByTimeAsc.length - 1].exitAt
@@ -712,6 +800,8 @@ export function createDashboardMockData({ year = 2023, monthIndex = 9, totalTrad
     table: {
       totalTrades: trades.length,
       trades,
+      orders,
+      transfers,
     },
   }
 }
