@@ -17,6 +17,9 @@ const LINE_BOTTOM = 160
 const AREA_TOP = 150
 const AREA_BOTTOM = 210
 const NOTES_STORAGE_KEY = 'deriverse.notes.v1'
+const DAY_IN_MS = 24 * 60 * 60 * 1000
+const PERPS_BASE_ASSETS = new Set(['BTC', 'ETH', 'SOL'])
+const WEEKDAY_SHORT_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 function mapValueToRange(value, min, max, rangeMin, rangeMax) {
   if (max === min) {
@@ -123,6 +126,137 @@ function getRangeDays(rangePreset) {
   return null
 }
 
+function formatDurationMinutes(minutes) {
+  const safeMinutes = Math.max(0, Number(minutes) || 0)
+  const hours = Math.floor(safeMinutes / 60)
+  const remainderMinutes = Math.round(safeMinutes % 60)
+  return `${hours}h ${remainderMinutes}m`
+}
+
+function getTradeMarketScope(trade) {
+  return PERPS_BASE_ASSETS.has(trade.baseAsset) ? 'PERPS' : 'SPOT'
+}
+
+function filterTradesByMarketScope(trades, marketScope) {
+  if (marketScope === 'ALL') {
+    return trades
+  }
+
+  return trades.filter((trade) => getTradeMarketScope(trade) === marketScope)
+}
+
+function formatSignedPercent(value, digits = 1) {
+  const sign = value >= 0 ? '+' : '-'
+  return `${sign}${Math.abs(value).toFixed(digits)}%`
+}
+
+function formatSignedInteger(value) {
+  const rounded = Math.round(value)
+  if (rounded === 0) {
+    return '0'
+  }
+
+  return `${rounded > 0 ? '+' : '-'}${Math.abs(rounded)}`
+}
+
+function formatSignedUsdDelta(value) {
+  const sign = value >= 0 ? '+' : '-'
+  return `${sign}${formatFee(Math.abs(value))}`
+}
+
+function formatSignedCompactDelta(value) {
+  const sign = value >= 0 ? '+' : '-'
+  return `${sign}${formatCompactValue(Math.abs(value))}`
+}
+
+function buildScopeSummary({ trades, startingEquity }) {
+  const totalTrades = trades.length
+  const totalPnl = trades.reduce((sum, trade) => sum + trade.pnl, 0)
+  const totalFees = trades.reduce((sum, trade) => sum + trade.fee, 0)
+  const totalVolume = trades.reduce((sum, trade) => sum + trade.notional, 0)
+  const totalDurationMinutes = trades.reduce((sum, trade) => sum + trade.durationMinutes, 0)
+  const winners = trades.filter((trade) => trade.pnl > 0)
+  const losers = trades.filter((trade) => trade.pnl < 0)
+  const closedTrades = trades.filter((trade) => trade.status === 'CLOSED')
+  const openTrades = trades.filter((trade) => trade.status === 'OPEN')
+  const longs = trades.filter((trade) => trade.side === 'LONG').length
+  const shorts = totalTrades - longs
+  const spotTrades = trades.filter((trade) => getTradeMarketScope(trade) === 'SPOT')
+  const perpsTrades = trades.filter((trade) => getTradeMarketScope(trade) === 'PERPS')
+
+  const realizedPnl = closedTrades.reduce((sum, trade) => sum + trade.pnl, 0)
+  const unrealizedPnl = openTrades.reduce((sum, trade) => sum + trade.pnl, 0)
+  const walletBalance = startingEquity + realizedPnl
+  const netEquity = walletBalance + unrealizedPnl
+  const netPnlPercent = startingEquity > 0 ? (totalPnl / startingEquity) * 100 : 0
+  const winRate = totalTrades > 0 ? (winners.length / totalTrades) * 100 : 0
+  const longShortRatio = longs / Math.max(shorts, 1)
+  const averageDurationMinutes = totalTrades > 0 ? totalDurationMinutes / totalTrades : 0
+  const maxWin = totalTrades > 0 ? Math.max(...trades.map((trade) => trade.pnl)) : 0
+  const maxLoss = totalTrades > 0 ? Math.min(...trades.map((trade) => trade.pnl)) : 0
+  const averageWin = winners.length > 0 ? winners.reduce((sum, trade) => sum + trade.pnl, 0) / winners.length : 0
+  const averageLoss = losers.length > 0 ? Math.abs(losers.reduce((sum, trade) => sum + trade.pnl, 0) / losers.length) : 0
+
+  const spotPnl = spotTrades.reduce((sum, trade) => sum + trade.pnl, 0)
+  const perpsPnl = perpsTrades.reduce((sum, trade) => sum + trade.pnl, 0)
+  const perpsNotional = perpsTrades.reduce((sum, trade) => sum + trade.notional, 0)
+  const marginUsed = perpsNotional / 5
+  const effectiveLeverage = perpsNotional / Math.max(Math.abs(netEquity), 1)
+  const marginUsagePercent = netEquity > 0 ? (marginUsed / netEquity) * 100 : 0
+  const liqBufferPercent = Math.max(
+    5,
+    100 - Math.min(92, effectiveLeverage * 11 + (Math.abs(unrealizedPnl) / Math.max(Math.abs(netEquity), 1)) * 10),
+  )
+  const fundingPnl = perpsTrades.reduce((sum, trade) => {
+    const hourlyRate = trade.side === 'LONG' ? -0.00001 : 0.000008
+    return sum + trade.notional * hourlyRate * (trade.durationMinutes / 60)
+  }, 0)
+  const inventoryTurnover = totalVolume / Math.max(Math.abs(walletBalance), 1)
+  const spotAverageDurationMinutes = spotTrades.length > 0
+    ? spotTrades.reduce((sum, trade) => sum + trade.durationMinutes, 0) / spotTrades.length
+    : 0
+  const impliedSlippageBps = totalTrades > 0
+    ? trades.reduce((sum, trade) => sum + (trade.type === 'Market' ? 6.5 : 1.6), 0) / totalTrades
+    : 0
+  const feeToPnlPercent = Math.abs(totalPnl) > 0 ? (totalFees / Math.abs(totalPnl)) * 100 : 0
+  const spotContributionPercent = Math.abs(totalPnl) > 0 ? (spotPnl / totalPnl) * 100 : 0
+  const perpsContributionPercent = Math.abs(totalPnl) > 0 ? (perpsPnl / totalPnl) * 100 : 0
+
+  return {
+    totalTrades,
+    totalPnl,
+    totalFees,
+    totalVolume,
+    totalDurationMinutes,
+    realizedPnl,
+    unrealizedPnl,
+    walletBalance,
+    netEquity,
+    netPnlPercent,
+    winRate,
+    longShortRatio,
+    averageDurationMinutes,
+    maxWin,
+    maxLoss,
+    averageWin,
+    averageLoss,
+    spotTrades: spotTrades.length,
+    perpsTrades: perpsTrades.length,
+    spotPnl,
+    perpsPnl,
+    fundingPnl,
+    effectiveLeverage,
+    marginUsagePercent,
+    liqBufferPercent,
+    inventoryTurnover,
+    spotAverageDurationMinutes,
+    impliedSlippageBps,
+    feeToPnlPercent,
+    spotContributionPercent,
+    perpsContributionPercent,
+  }
+}
+
 function escapeCsv(value) {
   const asString = String(value ?? '')
   if (!/[",\n]/.test(asString)) {
@@ -179,6 +313,7 @@ function App() {
 
   const [statusFilter, setStatusFilter] = useState('ALL')
   const [rangePreset, setRangePreset] = useState('ALL')
+  const [accountScope, setAccountScope] = useState('ALL')
   const [pageSize, setPageSize] = useState(10)
   const [page, setPage] = useState(1)
   const [chartView, setChartView] = useState('PERFORMANCE')
@@ -252,6 +387,47 @@ function App() {
     [baseDashboard.table.trades, rangeWindow.endDate, rangeWindow.startDate],
   )
 
+  const accountScopeTrades = useMemo(
+    () => filterTradesByMarketScope(scopedTrades, accountScope),
+    [accountScope, scopedTrades],
+  )
+
+  const previousRangeWindow = useMemo(() => {
+    if (!rangeWindow.startDate || !rangeWindow.endDate) {
+      return null
+    }
+
+    const spanDays = Math.max(1, Math.round((rangeWindow.endDate.getTime() - rangeWindow.startDate.getTime()) / DAY_IN_MS) + 1)
+    const previousEndDate = new Date(rangeWindow.startDate)
+    previousEndDate.setUTCDate(previousEndDate.getUTCDate() - 1)
+    const previousStartDate = new Date(previousEndDate)
+    previousStartDate.setUTCDate(previousStartDate.getUTCDate() - (spanDays - 1))
+
+    return {
+      startDate: previousStartDate,
+      endDate: previousEndDate,
+      startInput: formatDateInputValue(previousStartDate),
+      endInput: formatDateInputValue(previousEndDate),
+    }
+  }, [rangeWindow.endDate, rangeWindow.startDate])
+
+  const previousRangeTrades = useMemo(
+    () =>
+      previousRangeWindow
+        ? filterTradesByScope({
+          trades: baseDashboard.table.trades,
+          startDate: previousRangeWindow.startDate,
+          endDate: previousRangeWindow.endDate,
+        })
+        : [],
+    [baseDashboard.table.trades, previousRangeWindow],
+  )
+
+  const previousAccountScopeTrades = useMemo(
+    () => filterTradesByMarketScope(previousRangeTrades, accountScope),
+    [accountScope, previousRangeTrades],
+  )
+
   const dashboard = useMemo(
     () =>
       createDashboardSnapshot({
@@ -284,10 +460,12 @@ function App() {
   const chartAreaPath = buildAreaPath(dashboard.chart.points)
   const isHeatmapView = chartView === 'HEATMAP'
   const isImpactView = chartView === 'IMPACT'
+  const isInsightsView = chartView === 'INSIGHTS'
+  const isNonChartView = isHeatmapView || isImpactView || isInsightsView
   const lineValues = dashboard.chart.points.map((point) => point.lineValue)
   const lineMin = lineValues.length > 0 ? Math.min(...lineValues) : 0
   const lineMax = lineValues.length > 0 ? Math.max(...lineValues) : 0
-  const hoveredChartPoint = !isHeatmapView && !isImpactView && chartHoverIndex !== null ? dashboard.chart.points[chartHoverIndex] : null
+  const hoveredChartPoint = !isNonChartView && chartHoverIndex !== null ? dashboard.chart.points[chartHoverIndex] : null
   const hoverXPercent = hoveredChartPoint
     ? (chartHoverIndex / Math.max(dashboard.chart.points.length - 1, 1)) * 100
     : 0
@@ -319,19 +497,258 @@ function App() {
     }
   }, [positionSizing])
 
+  const accountScopeSummary = useMemo(
+    () => buildScopeSummary({ trades: accountScopeTrades, startingEquity: baseDashboard.startingEquity }),
+    [accountScopeTrades, baseDashboard.startingEquity],
+  )
+
+  const previousAccountScopeSummary = useMemo(
+    () =>
+      previousRangeWindow
+        ? buildScopeSummary({ trades: previousAccountScopeTrades, startingEquity: baseDashboard.startingEquity })
+        : null,
+    [baseDashboard.startingEquity, previousAccountScopeTrades, previousRangeWindow],
+  )
+
+  function getScopeDeltaLabel(currentValue, previousValue, formatter) {
+    if (previousAccountScopeSummary === null) {
+      return '--'
+    }
+
+    return formatter(currentValue - previousValue)
+  }
+
   const statsRows = [
     {
       label: 'Net PnL',
-      value: dashboard.stats.netPnl,
-      valueClass: dashboard.stats.netPnlValue >= 0 ? 'text-success' : 'text-danger',
+      value: formatSignedPercent(accountScopeSummary.netPnlPercent, 1),
+      valueClass: accountScopeSummary.netPnlPercent >= 0 ? 'text-success' : 'text-danger',
+      delta: getScopeDeltaLabel(
+        accountScopeSummary.netPnlPercent,
+        previousAccountScopeSummary?.netPnlPercent ?? 0,
+        (delta) => formatSignedPercent(delta, 1),
+      ),
     },
-    { label: 'Win Rate', value: dashboard.stats.winRate, valueClass: 'text-white' },
-    { label: 'Volume', value: dashboard.stats.volume, valueClass: 'text-white' },
-    { label: 'Fees', value: dashboard.stats.fees, valueClass: 'text-danger' },
-    { label: 'L/S Ratio', value: dashboard.stats.longShortRatio, valueClass: 'text-white' },
-    { label: 'Total Trades', value: dashboard.stats.totalTrades, valueClass: 'text-white' },
-    { label: 'Avg Duration', value: dashboard.stats.averageDuration, valueClass: 'text-white' },
+    {
+      label: 'Win Rate',
+      value: `${accountScopeSummary.winRate.toFixed(1)}%`,
+      valueClass: 'text-white',
+      delta: getScopeDeltaLabel(
+        accountScopeSummary.winRate,
+        previousAccountScopeSummary?.winRate ?? 0,
+        (delta) => formatSignedPercent(delta, 1),
+      ),
+    },
+    {
+      label: 'Volume',
+      value: formatCompactValue(accountScopeSummary.totalVolume),
+      valueClass: 'text-white',
+      delta: getScopeDeltaLabel(
+        accountScopeSummary.totalVolume,
+        previousAccountScopeSummary?.totalVolume ?? 0,
+        (delta) => formatSignedCompactDelta(delta),
+      ),
+    },
+    {
+      label: 'Fees',
+      value: formatFee(accountScopeSummary.totalFees),
+      valueClass: 'text-danger',
+      delta: getScopeDeltaLabel(
+        accountScopeSummary.totalFees,
+        previousAccountScopeSummary?.totalFees ?? 0,
+        (delta) => formatSignedUsdDelta(delta),
+      ),
+    },
+    {
+      label: 'L/S Ratio',
+      value: accountScopeSummary.longShortRatio.toFixed(2),
+      valueClass: 'text-white',
+      delta: getScopeDeltaLabel(
+        accountScopeSummary.longShortRatio,
+        previousAccountScopeSummary?.longShortRatio ?? 0,
+        (delta) => `${delta >= 0 ? '+' : '-'}${Math.abs(delta).toFixed(2)}`,
+      ),
+    },
+    {
+      label: 'Total Trades',
+      value: String(accountScopeSummary.totalTrades),
+      valueClass: 'text-white',
+      delta: getScopeDeltaLabel(
+        accountScopeSummary.totalTrades,
+        previousAccountScopeSummary?.totalTrades ?? 0,
+        (delta) => formatSignedInteger(delta),
+      ),
+    },
+    {
+      label: 'Avg Duration',
+      value: formatDurationMinutes(accountScopeSummary.averageDurationMinutes),
+      valueClass: 'text-white',
+      delta: getScopeDeltaLabel(
+        accountScopeSummary.averageDurationMinutes,
+        previousAccountScopeSummary?.averageDurationMinutes ?? 0,
+        (delta) => `${delta >= 0 ? '+' : '-'}${formatDurationMinutes(Math.abs(delta))}`,
+      ),
+    },
   ]
+
+  const isComparisonAvailable = previousAccountScopeSummary !== null
+  const accountMatrixItems = [
+    { label: 'Net Equity', value: formatFee(accountScopeSummary.netEquity), valueClass: 'text-white' },
+    { label: 'Wallet Balance', value: formatFee(accountScopeSummary.walletBalance), valueClass: 'text-white' },
+    {
+      label: 'Realized PnL',
+      value: formatSignedPnl(accountScopeSummary.realizedPnl),
+      valueClass: accountScopeSummary.realizedPnl >= 0 ? 'text-success' : 'text-danger',
+    },
+    {
+      label: 'Unrealized PnL',
+      value: formatSignedPnl(accountScopeSummary.unrealizedPnl),
+      valueClass: accountScopeSummary.unrealizedPnl >= 0 ? 'text-success' : 'text-danger',
+    },
+    { label: 'Fees Paid', value: formatFee(accountScopeSummary.totalFees), valueClass: 'text-danger' },
+    {
+      label: 'Funding PnL',
+      value: accountScope === 'SPOT' ? '--' : formatSignedPnl(accountScopeSummary.fundingPnl),
+      valueClass:
+        accountScope === 'SPOT'
+          ? 'text-secondary-text'
+          : accountScopeSummary.fundingPnl >= 0
+            ? 'text-success'
+            : 'text-danger',
+    },
+  ]
+  const performanceMatrixItems = [
+    ...statsRows.map((row, index) => ({
+      label: row.label,
+      value: row.value,
+      valueClass: row.valueClass,
+      delta: isComparisonAvailable && index < 2 ? row.delta : null,
+    })),
+    {
+      label: 'Avg Win/Loss',
+      value: `${formatCompactValue(accountScopeSummary.averageWin)} / -${formatCompactValue(accountScopeSummary.averageLoss)}`,
+      valueClass: 'text-white',
+      delta: null,
+    },
+    {
+      label: 'Max Win/Loss',
+      value: `${formatCompactValue(accountScopeSummary.maxWin)} / -${formatCompactValue(Math.abs(accountScopeSummary.maxLoss))}`,
+      valueClass: 'text-white',
+      delta: null,
+    },
+  ]
+  const scopeMatrixItems = [
+    { label: 'Spot PnL Share', value: `${accountScopeSummary.spotContributionPercent.toFixed(1)}%`, valueClass: 'text-white' },
+    { label: 'Perps PnL Share', value: `${accountScopeSummary.perpsContributionPercent.toFixed(1)}%`, valueClass: 'text-white' },
+    { label: 'Spot / Perps Trades', value: `${accountScopeSummary.spotTrades} / ${accountScopeSummary.perpsTrades}`, valueClass: 'text-white' },
+    {
+      label: 'Funding PnL',
+      value: formatSignedPnl(accountScopeSummary.fundingPnl),
+      valueClass: accountScopeSummary.fundingPnl >= 0 ? 'text-success' : 'text-danger',
+    },
+  ]
+
+  const bestDayTradeStrips = useMemo(() => {
+    const bestDayIndex = WEEKDAY_SHORT_LABELS.indexOf(dashboard.analytics.bestDay.label)
+    if (bestDayIndex < 0) {
+      return []
+    }
+
+    return scopedTrades
+      .filter((trade) => trade.exitAt.getUTCDay() === bestDayIndex)
+      .slice()
+      .sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl))
+      .slice(0, 10)
+      .map((trade) => ({
+        id: trade.id,
+        symbol: trade.symbol.split('/')[0].trim(),
+        sideShort: trade.side === 'LONG' ? 'L' : 'S',
+        pnl: trade.pnl,
+      }))
+  }, [dashboard.analytics.bestDay.label, scopedTrades])
+
+  const streakInsights = useMemo(() => {
+    const closedTrades = scopedTrades
+      .filter((trade) => trade.status === 'CLOSED')
+      .slice()
+      .sort((a, b) => a.exitAt.getTime() - b.exitAt.getTime())
+
+    if (closedTrades.length === 0) {
+      return {
+        currentRunPnl: 0,
+        longestWinRunCount: 0,
+        longestWinRunPnl: 0,
+        longestLossRunCount: 0,
+        longestLossRunPnl: 0,
+        recentOutcomes: [],
+      }
+    }
+
+    const runs = []
+    let currentType = null
+    let currentCount = 0
+    let currentPnl = 0
+
+    for (const trade of closedTrades) {
+      const runType = trade.pnl >= 0 ? 'WIN' : 'LOSS'
+      if (currentType === runType) {
+        currentCount += 1
+        currentPnl += trade.pnl
+      } else {
+        if (currentType !== null) {
+          runs.push({ type: currentType, count: currentCount, pnl: currentPnl })
+        }
+        currentType = runType
+        currentCount = 1
+        currentPnl = trade.pnl
+      }
+    }
+
+    runs.push({ type: currentType, count: currentCount, pnl: currentPnl })
+
+    const currentRun = runs[runs.length - 1]
+    const winRuns = runs.filter((run) => run.type === 'WIN')
+    const lossRuns = runs.filter((run) => run.type === 'LOSS')
+    const longestWinRun = winRuns.reduce((best, run) => {
+      if (!best) {
+        return run
+      }
+      if (run.count > best.count) {
+        return run
+      }
+      if (run.count === best.count && run.pnl > best.pnl) {
+        return run
+      }
+      return best
+    }, null)
+    const longestLossRun = lossRuns.reduce((best, run) => {
+      if (!best) {
+        return run
+      }
+      if (run.count > best.count) {
+        return run
+      }
+      if (run.count === best.count && Math.abs(run.pnl) > Math.abs(best.pnl)) {
+        return run
+      }
+      return best
+    }, null)
+
+    const recentOutcomes = closedTrades.slice(-8).map((trade) => ({
+      id: trade.id,
+      outcome: trade.pnl >= 0 ? 'W' : 'L',
+      pnl: trade.pnl,
+    }))
+
+    return {
+      currentRunPnl: currentRun?.pnl ?? 0,
+      longestWinRunCount: longestWinRun?.count ?? 0,
+      longestWinRunPnl: longestWinRun?.pnl ?? 0,
+      longestLossRunCount: longestLossRun?.count ?? 0,
+      longestLossRunPnl: longestLossRun?.pnl ?? 0,
+      recentOutcomes,
+    }
+  }, [scopedTrades])
 
   const impactSourceTrades = useMemo(
     () => (impactActiveOnly ? scopedTrades.filter((trade) => trade.status === 'OPEN') : scopedTrades),
@@ -411,7 +828,7 @@ function App() {
   }
 
   function handleChartMouseMove(event) {
-    if (isHeatmapView || isImpactView || dashboard.chart.points.length === 0) {
+    if (isNonChartView || dashboard.chart.points.length === 0) {
       return
     }
 
@@ -533,13 +950,6 @@ function App() {
               <DeriverseLogo className="size-5 text-primary" />
               <h1 className="text-base font-bold tracking-tight">DERIVERSE</h1>
             </div>
-            <button
-              className="group flex cursor-default items-center gap-1 rounded border border-primary/30 bg-primary/10 px-2 py-0.5 transition-colors hover:bg-primary/20"
-              type="button"
-            >
-              <span className="text-[10px] font-bold uppercase leading-none tracking-wider text-primary">{baseDashboard.modeLabel}</span>
-              <ChevronDownIcon className="size-3 text-primary transition-transform group-hover:translate-y-0.5" />
-            </button>
           </div>
 
           <div className="flex items-center">
@@ -553,50 +963,99 @@ function App() {
           </div>
         </header>
 
-        <div className="grid grid-cols-12 gap-px border-b border-panel-border bg-neutral-dark">
-          <div className="col-span-4 flex flex-col divide-y divide-neutral-dark bg-background-dark">
-            {statsRows.map((row) => (
-              <div className="flex items-center justify-between px-4 py-2.5" key={row.label}>
-                <span className="text-[10px] font-bold uppercase text-secondary-text">{row.label}</span>
-                <span className={`mono text-sm font-bold leading-none ${row.valueClass}`}>{row.value}</span>
+        <div className="grid h-[45vh] min-h-[340px] grid-cols-12 gap-px overflow-hidden border-b border-panel-border bg-neutral-dark">
+          <div className="col-span-4 h-full min-h-0 overflow-hidden bg-background-dark">
+            <div className="flex h-full flex-col">
+              <div className="border-b border-panel-border px-3 py-2">
+                <div className="overflow-hidden border border-panel-border">
+                  <div className="flex gap-px ">
+                    {['ALL', 'SPOT', 'PERPS'].map((scope) => (
+                      <button
+                        className={`h-7 px-2.5 text-[10px] font-bold uppercase ${accountScope === scope ? 'bg-primary text-background-dark' : 'bg-background-dark text-secondary-text hover:text-white'
+                          }`}
+                        key={scope}
+                        onClick={() => setAccountScope(scope)}
+                        type="button"
+                      >
+                        {scope}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
-            ))}
 
-            <div className="flex items-center justify-between px-4 py-2.5">
-              <span className="text-[10px] font-bold uppercase text-secondary-text">Avg Win/Loss</span>
-              <span className="mono text-sm font-bold leading-none text-white">
-                <span className="text-success">{dashboard.stats.averageWin}</span>
-                <span className="px-1 text-secondary-text">/</span>
-                <span className="text-danger">-{dashboard.stats.averageLoss}</span>
-              </span>
-            </div>
+              <div className="thin-scrollbar flex-1 overflow-y-auto p-3">
+                <section className="border border-panel-border bg-neutral-dark/20">
+                  <div className="space-y-2 p-2">
+                    <div>
+                      <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-secondary-text">Account</p>
+                      <div className="grid grid-cols-3 gap-x-2 gap-y-1.5">
+                        {accountMatrixItems.map((item) => (
+                          <div key={item.label}>
+                            <p className="text-[9px] uppercase text-secondary-text">{item.label}</p>
+                            <p className={`mono text-sm font-bold leading-none ${item.valueClass}`}>{item.value}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
 
-            <div className="flex items-center justify-between px-4 py-2.5">
-              <span className="text-[10px] font-bold uppercase text-secondary-text">Max Win/Loss</span>
-              <span className="mono text-sm font-bold leading-none text-white">
-                <span className="text-success">{dashboard.stats.maxWin}</span>
-                <span className="px-1 text-secondary-text">/</span>
-                <span className="text-danger">{dashboard.stats.maxLoss}</span>
-              </span>
+                    <div className="border-t border-panel-border/70 pt-2">
+                      <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-secondary-text">Performance</p>
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                        {performanceMatrixItems.map((item) => (
+                          <div key={item.label}>
+                            <p className="text-[9px] uppercase text-secondary-text">{item.label}</p>
+                            <p className={`mono text-sm font-bold leading-none ${item.valueClass}`}>
+                              {item.value}
+                              {item.delta && <span className="text-[9px] text-secondary-text"> · {item.delta}</span>}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="border-t border-panel-border/70 pt-2">
+                      <div className="mb-1 flex items-center justify-between">
+                        <p className="text-[9px] font-bold uppercase tracking-wider text-secondary-text">Scope</p>
+                        <p className="text-[9px] uppercase text-secondary-text">{accountScope}</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                        {scopeMatrixItems.map((item) => (
+                          <div key={item.label}>
+                            <p className="text-[9px] uppercase text-secondary-text">{item.label}</p>
+                            <p className={`mono text-sm font-bold leading-none ${item.valueClass}`}>{item.value}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              </div>
             </div>
           </div>
 
-          <div className="col-span-8 flex flex-col border-l border-panel-border bg-background-dark p-2">
+          <div className="col-span-8 flex h-full min-h-0 flex-col overflow-hidden border-l border-panel-border bg-background-dark p-2">
             <div className="mb-2 flex items-center justify-between gap-3">
               <div className="flex items-center gap-4">
-                <p className={`mono text-xs font-medium ${dashboard.chart.headlineClass}`}>
-                  {dashboard.chart.headlineLabel}: {dashboard.chart.headlineValue}
-                </p>
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5">
-                    <span className="size-2 bg-primary" />
-                    <span className="text-[10px] text-secondary-text">{dashboard.chart.lineLegend}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="size-2 border border-danger bg-danger/40" />
-                    <span className="text-[10px] text-secondary-text">{dashboard.chart.areaLegend}</span>
-                  </div>
-                </div>
+                {isInsightsView ? (
+                  <p className="mono text-xs font-medium text-white">Insights Snapshot</p>
+                ) : (
+                  <>
+                    <p className={`mono text-xs font-medium ${dashboard.chart.headlineClass}`}>
+                      {dashboard.chart.headlineLabel}: {dashboard.chart.headlineValue}
+                    </p>
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-1.5">
+                        <span className="size-2 bg-primary" />
+                        <span className="text-[10px] text-secondary-text">{dashboard.chart.lineLegend}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="size-2 border border-danger bg-danger/40" />
+                        <span className="text-[10px] text-secondary-text">{dashboard.chart.areaLegend}</span>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="flex items-center gap-2">
@@ -626,6 +1085,14 @@ function App() {
                     >
                       Impact
                     </button>
+                    <button
+                      className={`h-8 px-3 text-[10px] font-bold uppercase ${chartView === 'INSIGHTS' ? 'bg-primary text-background-dark' : 'bg-background-dark text-secondary-text hover:text-white'
+                        }`}
+                      onClick={() => setChartView('INSIGHTS')}
+                      type="button"
+                    >
+                      Insights
+                    </button>
                   </div>
                 </div>
 
@@ -648,7 +1115,7 @@ function App() {
               </div>
             </div>
 
-            <div className="relative mb-4 h-[280px] w-full">
+            <div className="relative mb-2 min-h-0 flex-1 overflow-hidden w-full">
               {isHeatmapView ? (
                 <div className="flex h-full flex-col overflow-hidden border border-panel-border bg-background-dark/40">
                   <div className="flex items-center justify-between border-b border-panel-border px-2 py-1">
@@ -674,7 +1141,7 @@ function App() {
                           <span className="flex items-center bg-background-dark px-1 text-secondary-text">{dayLabel}</span>
                           {dashboard.analytics.heatmap.values[dayIndex].map((value, slotIndex) => (
                             <span
-                              className="h-4 bg-background-dark"
+                              className="h-6 bg-background-dark"
                               key={`${dayLabel}-${slotIndex}`}
                               onMouseEnter={() =>
                                 setHeatmapHover({
@@ -700,11 +1167,10 @@ function App() {
                     <div className="flex items-center gap-2">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-secondary-text">Trade Impact Map</p>
                       <button
-                        className={`h-5 border px-2 text-[9px] font-bold uppercase ${
-                          impactActiveOnly
-                            ? 'border-primary/50 bg-primary/10 text-primary'
-                            : 'border-panel-border text-secondary-text hover:text-white'
-                        }`}
+                        className={`h-5 border px-2 text-[9px] font-bold uppercase ${impactActiveOnly
+                          ? 'border-primary/50 bg-primary/10 text-primary'
+                          : 'border-panel-border text-secondary-text hover:text-white'
+                          }`}
                         onClick={() => setImpactActiveOnly((current) => !current)}
                         type="button"
                       >
@@ -751,6 +1217,118 @@ function App() {
                     )}
                   </div>
                 </div>
+              ) : isInsightsView ? (
+                <div className="grid h-full grid-cols-12 gap-2">
+                  <div className="col-span-4 border border-panel-border bg-neutral-dark/20 px-3 py-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-secondary-text">Best Day Analysis</p>
+                    <div className="mt-2 flex items-end justify-between">
+                      <p className="mono text-lg font-bold text-white">{dashboard.analytics.bestDay.label}</p>
+                      <p className={`mono text-sm font-bold ${dashboard.analytics.bestDay.pnl >= 0 ? 'text-success' : 'text-danger'}`}>
+                        {formatSignedPnl(dashboard.analytics.bestDay.pnl)}
+                      </p>
+                    </div>
+                    <p className="mt-1 text-[10px] uppercase text-secondary-text">{dashboard.analytics.bestDay.trades} trades in selected range</p>
+                    <div className="mt-2 border-t border-panel-border/70 pt-2">
+                      <p className="text-[9px] uppercase text-secondary-text">Best-day trades</p>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {bestDayTradeStrips.length > 0 ? (
+                          bestDayTradeStrips.map((trade) => (
+                            <span
+                              className={`mono inline-flex items-center gap-1 border border-panel-border bg-background-dark/70 px-1.5 py-0.5 text-[9px] ${trade.pnl >= 0 ? 'text-success' : 'text-danger'}`}
+                              key={trade.id}
+                              title={`${trade.symbol} ${trade.sideShort === 'L' ? 'LONG' : 'SHORT'} ${formatSignedPnl(trade.pnl)}`}
+                            >
+                              <span className="text-secondary-text">{trade.symbol}</span>
+                              <span className="text-secondary-text">{trade.sideShort}</span>
+                              <span>{formatSignedPnl(trade.pnl)}</span>
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-[9px] uppercase text-secondary-text">No day trades in scope</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="col-span-4 border border-panel-border bg-neutral-dark/20 px-3 py-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-secondary-text">Win/Loss Streak Counters</p>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <div>
+                        <p className="text-[9px] uppercase text-secondary-text">Current</p>
+                        <p className="mono text-sm font-bold text-white">
+                          W{dashboard.analytics.streaks.currentWin} / L{dashboard.analytics.streaks.currentLoss}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] uppercase text-secondary-text">Max</p>
+                        <p className="mono text-sm font-bold text-white">
+                          W{dashboard.analytics.streaks.maxWin} / L{dashboard.analytics.streaks.maxLoss}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-2 border-t border-panel-border/70 pt-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <p className="text-[9px] uppercase text-secondary-text">Current Run PnL</p>
+                          <p className={`mono text-sm font-bold ${streakInsights.currentRunPnl >= 0 ? 'text-success' : 'text-danger'}`}>
+                            {formatSignedPnl(streakInsights.currentRunPnl)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] uppercase text-secondary-text">Longest Runs PnL</p>
+                          <p className="mono text-[10px] font-bold text-white">
+                            W{streakInsights.longestWinRunCount}: {formatSignedPnl(streakInsights.longestWinRunPnl)}
+                          </p>
+                          <p className="mono text-[10px] font-bold text-white">
+                            L{streakInsights.longestLossRunCount}: {formatSignedPnl(streakInsights.longestLossRunPnl)}
+                          </p>
+                        </div>
+                      </div>
+                      <p className="mt-2 text-[9px] uppercase text-secondary-text">Recent outcomes</p>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {streakInsights.recentOutcomes.length > 0 ? (
+                          streakInsights.recentOutcomes.map((item) => (
+                            <span
+                              className={`mono inline-flex items-center gap-1 border border-panel-border bg-background-dark/70 px-1.5 py-0.5 text-[9px] ${item.outcome === 'W' ? 'text-success' : 'text-danger'}`}
+                              key={item.id}
+                            >
+                              <span>{item.outcome}</span>
+                              <span>{formatSignedPnl(item.pnl)}</span>
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-[9px] uppercase text-secondary-text">No closed streak data</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="col-span-4 border border-panel-border bg-neutral-dark/20 px-3 py-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-secondary-text">Risk Snapshot</p>
+                    <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2">
+                      <div>
+                        <p className="text-[9px] uppercase text-secondary-text">Profit Factor</p>
+                        <p className="mono text-sm font-bold text-white">{dashboard.risk.profitFactor.toFixed(2)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] uppercase text-secondary-text">Expectancy</p>
+                        <p className={`mono text-sm font-bold ${dashboard.risk.expectancy >= 0 ? 'text-success' : 'text-danger'}`}>
+                          {formatSignedPnl(dashboard.risk.expectancy)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] uppercase text-secondary-text">Max Drawdown</p>
+                        <p className="mono text-sm font-bold text-danger">
+                          {dashboard.risk.maxDrawdownPercent.toFixed(2)}% ({formatCompactValue(dashboard.risk.maxDrawdownAmount)})
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] uppercase text-secondary-text">Recovery</p>
+                        <p className="mono text-sm font-bold text-white">{dashboard.risk.recoveryDays} days</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               ) : dashboard.chart.points.length > 0 ? (
                 <div className="h-full w-full" onMouseLeave={() => setChartHoverIndex(null)}>
                   <svg
@@ -794,7 +1372,7 @@ function App() {
                 </div>
               )}
 
-              {!isHeatmapView && !isImpactView && (
+              {!isHeatmapView && !isImpactView && !isInsightsView && (
                 <div className="absolute bottom-0 left-0 flex w-full justify-between px-1">
                   <span className="mono text-[9px] uppercase text-secondary-text">{startLabel}</span>
                   <span className="mono text-[9px] uppercase text-secondary-text">{midLabel}</span>
@@ -806,66 +1384,6 @@ function App() {
             <div className="mt-auto border-t border-panel-border pt-3" />
           </div>
         </div>
-
-        <section className="border-b border-panel-border bg-background-dark px-4 py-3">
-          <div className="grid grid-cols-12 gap-3">
-            <div className="col-span-4 border border-panel-border bg-neutral-dark/20 px-3 py-2">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-secondary-text">Best Day Analysis</p>
-              <div className="mt-2 flex items-end justify-between">
-                <p className="mono text-lg font-bold text-white">{dashboard.analytics.bestDay.label}</p>
-                <p className={`mono text-sm font-bold ${dashboard.analytics.bestDay.pnl >= 0 ? 'text-success' : 'text-danger'}`}>
-                  {formatSignedPnl(dashboard.analytics.bestDay.pnl)}
-                </p>
-              </div>
-              <p className="mt-1 text-[10px] uppercase text-secondary-text">{dashboard.analytics.bestDay.trades} trades in selected range</p>
-            </div>
-
-            <div className="col-span-4 border border-panel-border bg-neutral-dark/20 px-3 py-2">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-secondary-text">Win/Loss Streak Counters</p>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <div>
-                  <p className="text-[9px] uppercase text-secondary-text">Current</p>
-                  <p className="mono text-sm font-bold text-white">
-                    W{dashboard.analytics.streaks.currentWin} / L{dashboard.analytics.streaks.currentLoss}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[9px] uppercase text-secondary-text">Max</p>
-                  <p className="mono text-sm font-bold text-white">
-                    W{dashboard.analytics.streaks.maxWin} / L{dashboard.analytics.streaks.maxLoss}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="col-span-4 border border-panel-border bg-neutral-dark/20 px-3 py-2">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-secondary-text">Risk Snapshot</p>
-              <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2">
-                <div>
-                  <p className="text-[9px] uppercase text-secondary-text">Profit Factor</p>
-                  <p className="mono text-sm font-bold text-white">{dashboard.risk.profitFactor.toFixed(2)}</p>
-                </div>
-                <div>
-                  <p className="text-[9px] uppercase text-secondary-text">Expectancy</p>
-                  <p className={`mono text-sm font-bold ${dashboard.risk.expectancy >= 0 ? 'text-success' : 'text-danger'}`}>
-                    {formatSignedPnl(dashboard.risk.expectancy)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[9px] uppercase text-secondary-text">Max Drawdown</p>
-                  <p className="mono text-sm font-bold text-danger">
-                    {dashboard.risk.maxDrawdownPercent.toFixed(2)}% ({formatCompactValue(dashboard.risk.maxDrawdownAmount)})
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[9px] uppercase text-secondary-text">Recovery</p>
-                  <p className="mono text-sm font-bold text-white">{dashboard.risk.recoveryDays} days</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-        </section>
 
         <div className="flex-1 overflow-hidden p-0">
           <div className="flex h-full flex-col bg-background-dark">
