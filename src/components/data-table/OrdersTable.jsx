@@ -24,7 +24,7 @@ export default function OrdersTable({
                 value={symbolFilter}
               >
                 {selectableSymbols.map((symbol) => (
-                  <option key={symbol} value={symbol}>
+                  <option className="bg-background-dark text-white" key={symbol} value={symbol}>
                     {symbol === 'ALL' ? 'All' : symbol}
                   </option>
                 ))}
@@ -46,10 +46,10 @@ export default function OrdersTable({
                 onChange={(event) => onOrderStatusFilterChange(event.target.value)}
                 value={orderStatusFilter}
               >
-                <option value="ALL">All</option>
-                <option value="OPEN">Open</option>
-                <option value="FILLED">Filled</option>
-                <option value="CANCELED">Canceled</option>
+                <option className="bg-background-dark text-white" value="ALL">All</option>
+                <option className="bg-background-dark text-white" value="OPEN">Open</option>
+                <option className="bg-background-dark text-white" value="FILLED">Filled</option>
+                <option className="bg-background-dark text-white" value="CANCELED">Canceled</option>
               </select>
             </div>
           </th>

@@ -19,10 +19,10 @@ export default function TransfersTable({ rows, transferStatusFilter, onTransferS
                 onChange={(event) => onTransferStatusFilterChange(event.target.value)}
                 value={transferStatusFilter}
               >
-                <option value="ALL">All</option>
-                <option value="COMPLETED">Completed</option>
-                <option value="PENDING">Pending</option>
-                <option value="FAILED">Failed</option>
+                <option className="bg-background-dark text-white" value="ALL">All</option>
+                <option className="bg-background-dark text-white" value="COMPLETED">Completed</option>
+                <option className="bg-background-dark text-white" value="PENDING">Pending</option>
+                <option className="bg-background-dark text-white" value="FAILED">Failed</option>
               </select>
             </div>
           </th>

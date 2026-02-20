@@ -46,9 +46,9 @@ export default function AccountPanel({
                 <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-secondary-text">Performance</p>
                 <div className="grid grid-cols-3 gap-x-3 gap-y-1.5">
                   {performanceMatrixItems.map((item) => (
-                    <div key={item.label}>
+                    <div className={item.label === 'Avg Win/Loss' ? 'col-span-2' : ''} key={item.label}>
                       <p className="text-[9px] uppercase text-secondary-text">{item.label}</p>
-                      <p className={`mono text-sm font-bold leading-none ${item.valueClass}`}>
+                      <p className={`mono text-sm font-bold leading-none ${item.valueClass} ${item.label === 'Avg Win/Loss' ? 'whitespace-nowrap' : ''}`}>
                         {item.value}
                         {item.delta && <span className="text-[9px] text-secondary-text"> · {item.delta}</span>}
                       </p>
@@ -62,7 +62,7 @@ export default function AccountPanel({
                   <p className="text-[9px] font-bold uppercase tracking-wider text-secondary-text">Scope</p>
                   <p className="text-[9px] uppercase text-secondary-text">{accountScope}</p>
                 </div>
-                <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                <div className="grid grid-cols-3 gap-x-3 gap-y-1.5">
                   {scopeMatrixItems.map((item) => (
                     <div key={item.label}>
                       <p className="text-[9px] uppercase text-secondary-text">{item.label}</p>

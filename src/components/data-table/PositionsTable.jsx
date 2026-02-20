@@ -25,7 +25,7 @@ export default function PositionsTable({
                 value={symbolFilter}
               >
                 {selectableSymbols.map((symbol) => (
-                  <option key={symbol} value={symbol}>
+                  <option className="bg-background-dark text-white" key={symbol} value={symbol}>
                     {symbol === 'ALL' ? 'All' : symbol}
                   </option>
                 ))}
@@ -41,9 +41,9 @@ export default function PositionsTable({
                 onChange={(event) => onStatusFilterChange(event.target.value)}
                 value={statusFilter}
               >
-                <option value="ALL">All</option>
-                <option value="OPEN">Open</option>
-                <option value="CLOSED">Closed</option>
+                <option className="bg-background-dark text-white" value="ALL">All</option>
+                <option className="bg-background-dark text-white" value="OPEN">Open</option>
+                <option className="bg-background-dark text-white" value="CLOSED">Closed</option>
               </select>
             </div>
           </th>
