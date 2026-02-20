@@ -342,7 +342,14 @@ function App() {
   const { connected, connecting, disconnect, publicKey } = useWallet()
   const { setVisible: setWalletModalVisible } = useWalletModal()
   const baseDashboard = useMemo(
-    () => createDashboardMockData({ year: 2023, monthIndex: 9, totalTrades: 142, seed: 20231114 }),
+    () => {
+      const now = new Date()
+      const year = now.getUTCFullYear()
+      const monthIndex = now.getUTCMonth()
+      const seed = year * 10000 + (monthIndex + 1) * 100 + 14
+
+      return createDashboardMockData({ year, monthIndex, totalTrades: 142, seed })
+    },
     [],
   )
 
@@ -350,6 +357,11 @@ function App() {
   const [orderStatusFilter, setOrderStatusFilter] = useState('ALL')
   const [transferStatusFilter, setTransferStatusFilter] = useState('ALL')
   const [rangePreset, setRangePreset] = useState('ALL')
+  const [isCustomRangeModalOpen, setIsCustomRangeModalOpen] = useState(false)
+  const [customRangeStartInput, setCustomRangeStartInput] = useState('')
+  const [customRangeEndInput, setCustomRangeEndInput] = useState('')
+  const [customRangeDraftStartInput, setCustomRangeDraftStartInput] = useState('')
+  const [customRangeDraftEndInput, setCustomRangeDraftEndInput] = useState('')
   const [accountScope, setAccountScope] = useState('ALL')
   const [symbolFilter, setSymbolFilter] = useState('ALL')
   const [tableView, setTableView] = useState('POSITIONS')
@@ -386,6 +398,29 @@ function App() {
   }, [annotationMap])
 
   const rangeWindow = useMemo(() => {
+    if (rangePreset === 'CUSTOM') {
+      if (!customRangeStartInput || !customRangeEndInput) {
+        return {
+          startDate: null,
+          endDate: null,
+          startInput: null,
+          endInput: null,
+        }
+      }
+
+      const startDate = new Date(`${customRangeStartInput}T00:00:00Z`)
+      const endDate = new Date(`${customRangeEndInput}T00:00:00Z`)
+      const normalizedStart = startDate <= endDate ? startDate : endDate
+      const normalizedEnd = startDate <= endDate ? endDate : startDate
+
+      return {
+        startDate: normalizedStart,
+        endDate: normalizedEnd,
+        startInput: formatDateInputValue(normalizedStart),
+        endInput: formatDateInputValue(normalizedEnd),
+      }
+    }
+
     const days = getRangeDays(rangePreset)
     if (!days) {
       return {
@@ -410,7 +445,7 @@ function App() {
       startInput: formatDateInputValue(startDate),
       endInput: formatDateInputValue(endDate),
     }
-  }, [baseDashboard.table.trades, rangePreset])
+  }, [baseDashboard.table.trades, customRangeEndInput, customRangeStartInput, rangePreset])
 
   const scopedTrades = useMemo(
     () =>
@@ -603,6 +638,36 @@ function App() {
 
   function handleWalletConnectClick() {
     setWalletModalVisible(true)
+  }
+
+  function handleRangePresetChange(nextPreset) {
+    if (nextPreset === 'CUSTOM') {
+      setCustomRangeDraftStartInput(customRangeStartInput || rangeWindow.startInput || '')
+      setCustomRangeDraftEndInput(customRangeEndInput || rangeWindow.endInput || '')
+      setIsCustomRangeModalOpen(true)
+      return
+    }
+
+    setRangePreset(nextPreset)
+    setPage(1)
+  }
+
+  function handleCloseCustomRangeModal() {
+    setIsCustomRangeModalOpen(false)
+    setCustomRangeDraftStartInput('')
+    setCustomRangeDraftEndInput('')
+  }
+
+  function handleApplyCustomRange() {
+    if (!customRangeDraftStartInput || !customRangeDraftEndInput) {
+      return
+    }
+
+    setCustomRangeStartInput(customRangeDraftStartInput)
+    setCustomRangeEndInput(customRangeDraftEndInput)
+    setRangePreset('CUSTOM')
+    setPage(1)
+    handleCloseCustomRangeModal()
   }
 
   function handleOpenDepositModal() {
@@ -1145,6 +1210,62 @@ function App() {
         onClose={() => setIsDepositModalOpen(false)}
         publicKey={publicKey}
       />
+      {isCustomRangeModalOpen && (
+        <div className="fixed inset-0 z-[66] flex items-center justify-center bg-black/65 px-4">
+          <div className="w-full max-w-[460px] border border-panel-border bg-background-dark p-4 shadow-[0_20px_70px_rgba(0,0,0,0.45)]">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-secondary-text">Custom Range</p>
+                <p className="text-sm font-bold text-white">Select start and end date</p>
+              </div>
+              <button
+                className="h-8 w-8 border border-panel-border bg-neutral-dark/40 text-lg leading-none text-secondary-text hover:text-white"
+                onClick={handleCloseCustomRangeModal}
+                type="button"
+              >
+                x
+              </button>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-secondary-text">Start Date</span>
+                <input
+                  className="h-9 w-full border border-panel-border bg-background-dark px-2 text-xs font-bold text-white outline-none"
+                  onChange={(event) => setCustomRangeDraftStartInput(event.target.value)}
+                  type="date"
+                  value={customRangeDraftStartInput}
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-secondary-text">End Date</span>
+                <input
+                  className="h-9 w-full border border-panel-border bg-background-dark px-2 text-xs font-bold text-white outline-none"
+                  onChange={(event) => setCustomRangeDraftEndInput(event.target.value)}
+                  type="date"
+                  value={customRangeDraftEndInput}
+                />
+              </label>
+            </div>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                className="h-9 border border-panel-border bg-background-dark px-3 text-[10px] font-bold uppercase tracking-wider text-secondary-text hover:text-white"
+                onClick={handleCloseCustomRangeModal}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="h-9 border border-primary/50 bg-primary/10 px-3 text-[10px] font-bold uppercase tracking-wider text-primary hover:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!customRangeDraftStartInput || !customRangeDraftEndInput}
+                onClick={handleApplyCustomRange}
+                type="button"
+              >
+                Apply Range
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {editingNoteTrade && (
         <div className="fixed inset-0 z-[65] flex items-center justify-center bg-black/65 px-4">
           <div className="w-full max-w-[560px] border border-panel-border bg-background-dark p-4 shadow-[0_20px_70px_rgba(0,0,0,0.45)]">
@@ -1343,7 +1464,7 @@ function App() {
                       </div>
                       {showDailyFeeBars && (
                         <div className="flex items-center gap-1.5">
-                          <span className="h-2 w-1.5 bg-[#7F1D1D]" />
+                          <span className="h-2 w-1.5 border border-[#F59E0B] bg-[#B45309]" />
                           <span className="text-[10px] text-secondary-text">{dashboard.chart.feeLegend ?? 'Daily Fees'}</span>
                         </div>
                       )}
@@ -1394,8 +1515,7 @@ function App() {
                   <select
                     className="h-6 w-[72px] bg-transparent text-xs font-bold text-white outline-none"
                     onChange={(event) => {
-                      setRangePreset(event.target.value)
-                      setPage(1)
+                      handleRangePresetChange(event.target.value)
                     }}
                     value={rangePreset}
                   >
@@ -1403,6 +1523,7 @@ function App() {
                     <option className="bg-background-dark" value="7D">7D</option>
                     <option className="bg-background-dark" value="30D">30D</option>
                     <option className="bg-background-dark" value="ALL">ALL</option>
+                    <option className="bg-background-dark" value="CUSTOM">Custom</option>
                   </select>
                 </div>
               </div>
