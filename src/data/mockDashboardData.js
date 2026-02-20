@@ -461,16 +461,19 @@ function buildDailyChart({ trades, startDate, endDate, startingEquity }) {
     const pnl = pnlByDay.get(dayKey) ?? 0
     equity += pnl
     peak = Math.max(peak, equity)
+    const cumulativePnl = equity - startingEquity
 
     points.push({
       label: formatDayLabel(dayDate),
-      lineValue: equity,
+      lineValue: cumulativePnl,
+      secondaryLineValue: equity,
       areaValue: peak - equity,
     })
   }
 
   return {
     lineLegend: 'Cumulative PnL',
+    secondLineLegend: 'Account Equity',
     areaLegend: 'Drawdown Overlay',
     points,
     xLabels: getXLabels(points),

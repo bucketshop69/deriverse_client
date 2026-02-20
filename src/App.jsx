@@ -30,19 +30,27 @@ function mapValueToRange(value, min, max, rangeMin, rangeMax) {
   return rangeMax - ratio * (rangeMax - rangeMin)
 }
 
-function buildLinePath(points) {
+function buildLinePath(points, valueKey = 'lineValue') {
   if (points.length === 0) {
     return ''
   }
 
-  const values = points.map((point) => point.lineValue)
+  const values = points
+    .map((point) => point[valueKey])
+    .filter((value) => Number.isFinite(value))
+
+  if (values.length === 0) {
+    return ''
+  }
+
   const min = Math.min(...values)
   const max = Math.max(...values)
 
   return points
     .map((point, index) => {
       const x = (index / Math.max(points.length - 1, 1)) * CHART_WIDTH
-      const y = mapValueToRange(point.lineValue, min, max, LINE_TOP, LINE_BOTTOM)
+      const pointValue = Number.isFinite(point[valueKey]) ? point[valueKey] : 0
+      const y = mapValueToRange(pointValue, min, max, LINE_TOP, LINE_BOTTOM)
       return `${index === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`
     })
     .join(' ')
@@ -321,14 +329,6 @@ function App() {
   const [heatmapHover, setHeatmapHover] = useState(null)
   const [impactHover, setImpactHover] = useState(null)
   const [impactActiveOnly, setImpactActiveOnly] = useState(false)
-  const [isSizerOpen, setIsSizerOpen] = useState(false)
-  const [positionSizing, setPositionSizing] = useState({
-    accountBalance: '35000',
-    riskPercent: '1',
-    entryPrice: '29800',
-    stopPrice: '29100',
-    leverage: '5',
-  })
   const [annotationMap, setAnnotationMap] = useState(() => {
     if (typeof window === 'undefined') {
       return {}
@@ -456,7 +456,9 @@ function App() {
     return filteredTrades.slice(start, end)
   }, [currentPage, filteredTrades, pageSize])
   const paginationItems = buildPaginationItems(pageCount, currentPage)
-  const chartLinePath = buildLinePath(dashboard.chart.points)
+  const chartLinePath = buildLinePath(dashboard.chart.points, 'lineValue')
+  const accountEquityLinePath = buildLinePath(dashboard.chart.points, 'secondaryLineValue')
+  const hasAccountEquityLine = Boolean(dashboard.chart.secondLineLegend && accountEquityLinePath)
   const chartAreaPath = buildAreaPath(dashboard.chart.points)
   const isHeatmapView = chartView === 'HEATMAP'
   const isImpactView = chartView === 'IMPACT'
@@ -476,27 +478,6 @@ function App() {
   const visibleStart = filteredTrades.length === 0 ? 0 : (currentPage - 1) * pageSize + 1
   const visibleEnd = filteredTrades.length === 0 ? 0 : visibleStart + paginatedTrades.length - 1
 
-  const sizingResult = useMemo(() => {
-    const accountBalance = Number(positionSizing.accountBalance) || 0
-    const riskPercent = Number(positionSizing.riskPercent) || 0
-    const entryPrice = Number(positionSizing.entryPrice) || 0
-    const stopPrice = Number(positionSizing.stopPrice) || 0
-    const leverage = Number(positionSizing.leverage) || 0
-    const stopDistance = Math.abs(entryPrice - stopPrice)
-    const riskAmount = accountBalance * (riskPercent / 100)
-    const units = stopDistance > 0 ? riskAmount / stopDistance : 0
-    const notional = units * entryPrice
-    const marginRequired = leverage > 0 ? notional / leverage : 0
-
-    return {
-      stopDistance,
-      riskAmount,
-      units,
-      notional,
-      marginRequired,
-    }
-  }, [positionSizing])
-
   const accountScopeSummary = useMemo(
     () => buildScopeSummary({ trades: accountScopeTrades, startingEquity: baseDashboard.startingEquity }),
     [accountScopeTrades, baseDashboard.startingEquity],
@@ -509,6 +490,25 @@ function App() {
         : null,
     [baseDashboard.startingEquity, previousAccountScopeTrades, previousRangeWindow],
   )
+  const aiDocsPrompt = useMemo(
+    () =>
+      [
+        'Use the Deriverse docs to analyze this wallet.',
+        '',
+        'Wallet: <WALLET_ADDRESS>',
+        'Documentation URL: https://deriverse.gitbook.io/deriverse-v1',
+        '',
+        'Please provide:',
+        '1) Performance summary',
+        '2) Key risk metrics',
+        '3) Notable trade behavior patterns',
+        '4) Improvements based on Deriverse features',
+        '5) Follow-up questions for deeper review',
+      ].join('\n'),
+    [],
+  )
+  const chatgptPrefillUrl = useMemo(() => `https://chatgpt.com/?q=${encodeURIComponent(aiDocsPrompt)}`, [aiDocsPrompt])
+  const claudePrefillUrl = useMemo(() => `https://claude.ai/new?q=${encodeURIComponent(aiDocsPrompt)}`, [aiDocsPrompt])
 
   function getScopeDeltaLabel(currentValue, previousValue, formatter) {
     if (previousAccountScopeSummary === null) {
@@ -1049,6 +1049,12 @@ function App() {
                         <span className="size-2 bg-primary" />
                         <span className="text-[10px] text-secondary-text">{dashboard.chart.lineLegend}</span>
                       </div>
+                      {hasAccountEquityLine && (
+                        <div className="flex items-center gap-1.5">
+                          <span className="h-0.5 w-3 border-t border-dashed border-[#6B7280]" />
+                          <span className="text-[10px] text-secondary-text">{dashboard.chart.secondLineLegend}</span>
+                        </div>
+                      )}
                       <div className="flex items-center gap-1.5">
                         <span className="size-2 border border-danger bg-danger/40" />
                         <span className="text-[10px] text-secondary-text">{dashboard.chart.areaLegend}</span>
@@ -1339,6 +1345,16 @@ function App() {
                   >
                     <path d={chartAreaPath} fill="rgba(255, 59, 48, 0.07)" />
                     <path d={chartLinePath} fill="none" stroke="#9CA3AF" strokeWidth="1.5" />
+                    {hasAccountEquityLine && (
+                      <path
+                        d={accountEquityLinePath}
+                        fill="none"
+                        stroke="#6B7280"
+                        strokeDasharray="4 3"
+                        strokeLinecap="round"
+                        strokeWidth="1.2"
+                      />
+                    )}
                     <line stroke="#2A2A2A" strokeDasharray="4" strokeWidth="1.5" x1="0" x2={CHART_WIDTH} y1="55" y2="55" />
                     <line stroke="#2A2A2A" strokeDasharray="4" strokeWidth="1.5" x1="0" x2={CHART_WIDTH} y1="110" y2="110" />
                     <line stroke="#2A2A2A" strokeDasharray="4" strokeWidth="1.5" x1="0" x2={CHART_WIDTH} y1="160" y2="160" />
@@ -1359,6 +1375,11 @@ function App() {
                         <p className="mono text-primary">
                           {dashboard.chart.lineLegend}: {formatCompactValue(hoveredChartPoint.lineValue)}
                         </p>
+                        {dashboard.chart.secondLineLegend && Number.isFinite(hoveredChartPoint.secondaryLineValue) && (
+                          <p className="mono text-[#6B7280]">
+                            {dashboard.chart.secondLineLegend}: {formatCompactValue(hoveredChartPoint.secondaryLineValue)}
+                          </p>
+                        )}
                         <p className="mono text-danger">
                           {dashboard.chart.areaLegend}: {formatCompactValue(hoveredChartPoint.areaValue)}
                         </p>
@@ -1387,75 +1408,12 @@ function App() {
 
         <div className="flex-1 overflow-hidden p-0">
           <div className="flex h-full flex-col bg-background-dark">
-            <div className="flex items-center justify-between border-b border-panel-border px-4 py-2">
+            <div className="flex items-center justify-end border-b border-panel-border px-4 py-2">
               <div className="flex items-center gap-2">
-                <button
-                  className={`h-7 border px-3 text-[10px] font-bold uppercase transition-colors ${isSizerOpen
-                    ? 'border-primary/50 bg-primary/10 text-primary'
-                    : 'border-panel-border text-secondary-text hover:text-white'
-                    }`}
-                  onClick={() => setIsSizerOpen((value) => !value)}
-                  type="button"
-                >
-                  Position Sizing Calculator
-                </button>
-                <button
-                  className="h-7 border border-panel-border px-3 text-[10px] font-bold uppercase text-secondary-text transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={filteredTrades.length === 0}
-                  onClick={handleExportCsv}
-                  type="button"
-                >
-                  Export CSV
-                </button>
-                <button
-                  className="h-7 border border-panel-border px-3 text-[10px] font-bold uppercase text-secondary-text transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={filteredTrades.length === 0}
-                  onClick={handleExportPdf}
-                  type="button"
-                >
-                  Export PDF
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <label className="flex items-center gap-2 text-[10px] font-bold uppercase text-secondary-text" htmlFor="status-filter">
-                  Status
-                  <select
-                    className="h-7 border border-panel-border bg-background-dark px-2 text-[10px] font-bold uppercase text-white outline-none"
-                    id="status-filter"
-                    onChange={(event) => {
-                      setStatusFilter(event.target.value)
-                      setPage(1)
-                    }}
-                    value={statusFilter}
-                  >
-                    <option value="OPEN">Open</option>
-                    <option value="CLOSED">Closed</option>
-                    <option value="ALL">All</option>
-                  </select>
-                </label>
-
-                <label className="flex items-center gap-2 text-[10px] font-bold uppercase text-secondary-text" htmlFor="rows-per-page">
-                  Rows
-                  <select
-                    className="h-7 border border-panel-border bg-background-dark px-2 text-[10px] font-bold uppercase text-white outline-none"
-                    id="rows-per-page"
-                    onChange={(event) => {
-                      setPageSize(Number(event.target.value))
-                      setPage(1)
-                    }}
-                    value={pageSize}
-                  >
-                    <option value={10}>10</option>
-                    <option value={25}>25</option>
-                    <option value={50}>50</option>
-                  </select>
-                </label>
-
                 <span className="text-[10px] font-bold uppercase text-secondary-text">Ask AI</span>
                 <a
                   className="h-7 border border-panel-border px-3 text-[10px] font-bold uppercase leading-7 text-secondary-text transition-colors hover:text-white"
-                  href={baseDashboard.tools.chatgptUrl}
+                  href={chatgptPrefillUrl}
                   rel="noreferrer"
                   target="_blank"
                 >
@@ -1463,103 +1421,39 @@ function App() {
                 </a>
                 <a
                   className="h-7 border border-panel-border px-3 text-[10px] font-bold uppercase leading-7 text-secondary-text transition-colors hover:text-white"
-                  href={baseDashboard.tools.claudeUrl}
+                  href={claudePrefillUrl}
                   rel="noreferrer"
                   target="_blank"
                 >
                   Claude
                 </a>
+
+                <label className="flex items-center gap-2 text-[10px] font-bold uppercase text-secondary-text" htmlFor="export-menu">
+                  Export
+                  <select
+                    className="h-7 border border-panel-border bg-background-dark px-2 text-[10px] font-bold uppercase text-white outline-none disabled:cursor-not-allowed disabled:opacity-40"
+                    disabled={filteredTrades.length === 0}
+                    id="export-menu"
+                    onChange={(event) => {
+                      if (event.target.value === 'CSV') {
+                        handleExportCsv()
+                      }
+
+                      if (event.target.value === 'PDF') {
+                        handleExportPdf()
+                      }
+
+                      event.target.value = ''
+                    }}
+                    defaultValue=""
+                  >
+                    <option value="" disabled>Choose</option>
+                    <option value="CSV">CSV</option>
+                    <option value="PDF">PDF</option>
+                  </select>
+                </label>
               </div>
             </div>
-
-            {isSizerOpen && (
-              <div className="grid grid-cols-12 gap-3 border-b border-panel-border bg-neutral-dark/10 px-4 py-3">
-                <div className="col-span-7 grid grid-cols-5 gap-2">
-                  <label className="flex flex-col text-[10px] font-bold uppercase tracking-wider text-secondary-text">
-                    Account
-                    <input
-                      className="mt-1 h-8 border border-panel-border bg-background-dark px-2 text-xs text-white outline-none"
-                      min="0"
-                      onChange={(event) => setPositionSizing((prev) => ({ ...prev, accountBalance: event.target.value }))}
-                      step="100"
-                      type="number"
-                      value={positionSizing.accountBalance}
-                    />
-                  </label>
-                  <label className="flex flex-col text-[10px] font-bold uppercase tracking-wider text-secondary-text">
-                    Risk %
-                    <input
-                      className="mt-1 h-8 border border-panel-border bg-background-dark px-2 text-xs text-white outline-none"
-                      min="0"
-                      onChange={(event) => setPositionSizing((prev) => ({ ...prev, riskPercent: event.target.value }))}
-                      step="0.1"
-                      type="number"
-                      value={positionSizing.riskPercent}
-                    />
-                  </label>
-                  <label className="flex flex-col text-[10px] font-bold uppercase tracking-wider text-secondary-text">
-                    Entry
-                    <input
-                      className="mt-1 h-8 border border-panel-border bg-background-dark px-2 text-xs text-white outline-none"
-                      min="0"
-                      onChange={(event) => setPositionSizing((prev) => ({ ...prev, entryPrice: event.target.value }))}
-                      step="0.01"
-                      type="number"
-                      value={positionSizing.entryPrice}
-                    />
-                  </label>
-                  <label className="flex flex-col text-[10px] font-bold uppercase tracking-wider text-secondary-text">
-                    Stop
-                    <input
-                      className="mt-1 h-8 border border-panel-border bg-background-dark px-2 text-xs text-white outline-none"
-                      min="0"
-                      onChange={(event) => setPositionSizing((prev) => ({ ...prev, stopPrice: event.target.value }))}
-                      step="0.01"
-                      type="number"
-                      value={positionSizing.stopPrice}
-                    />
-                  </label>
-                  <label className="flex flex-col text-[10px] font-bold uppercase tracking-wider text-secondary-text">
-                    Leverage
-                    <input
-                      className="mt-1 h-8 border border-panel-border bg-background-dark px-2 text-xs text-white outline-none"
-                      min="1"
-                      onChange={(event) => setPositionSizing((prev) => ({ ...prev, leverage: event.target.value }))}
-                      step="1"
-                      type="number"
-                      value={positionSizing.leverage}
-                    />
-                  </label>
-                </div>
-
-                <div className="col-span-5 grid grid-cols-2 gap-2 border border-panel-border bg-background-dark/60 p-2">
-                  <div>
-                    <p className="text-[9px] uppercase text-secondary-text">Risk Amount</p>
-                    <p className="mono text-sm font-bold text-danger">{formatFee(sizingResult.riskAmount)}</p>
-                  </div>
-                  <div>
-                    <p className="text-[9px] uppercase text-secondary-text">Stop Distance</p>
-                    <p className="mono text-sm font-bold text-white">{formatFee(sizingResult.stopDistance)}</p>
-                  </div>
-                  <div>
-                    <p className="text-[9px] uppercase text-secondary-text">Position Units</p>
-                    <p className="mono text-sm font-bold text-primary">{sizingResult.units.toFixed(4)}</p>
-                  </div>
-                  <div>
-                    <p className="text-[9px] uppercase text-secondary-text">Notional</p>
-                    <p className="mono text-sm font-bold text-white">{formatFee(sizingResult.notional)}</p>
-                  </div>
-                  <div>
-                    <p className="text-[9px] uppercase text-secondary-text">Margin Required</p>
-                    <p className="mono text-sm font-bold text-success">{formatFee(sizingResult.marginRequired)}</p>
-                  </div>
-                  <div>
-                    <p className="text-[9px] uppercase text-secondary-text">Rule</p>
-                    <p className="mono text-sm font-bold text-secondary-text">Risk / |Entry - Stop|</p>
-                  </div>
-                </div>
-              </div>
-            )}
 
             <div className="overflow-x-auto">
               <table className="w-full min-w-[1280px] text-left text-xs">
@@ -1567,7 +1461,24 @@ function App() {
                   <tr className="bg-neutral-dark/30 text-[10px] font-semibold uppercase text-secondary-text">
                     <th className="border-b border-r border-panel-border px-4 py-2">Date / Time</th>
                     <th className="border-b border-r border-panel-border px-4 py-2">Symbol</th>
-                    <th className="border-b border-r border-panel-border px-4 py-2">Status</th>
+                    <th className="border-b border-r border-panel-border px-4 py-2">
+                      <div className="flex items-center gap-2">
+                        <span>Status</span>
+                        <select
+                          className="h-6 border border-panel-border bg-transparent px-1.5 text-[9px] font-bold uppercase text-white outline-none"
+                          id="status-filter"
+                          onChange={(event) => {
+                            setStatusFilter(event.target.value)
+                            setPage(1)
+                          }}
+                          value={statusFilter}
+                        >
+                          <option value="ALL">All</option>
+                          <option value="OPEN">Open</option>
+                          <option value="CLOSED">Closed</option>
+                        </select>
+                      </div>
+                    </th>
                     <th className="border-b border-r border-panel-border px-4 py-2">Side</th>
                     <th className="border-b border-r border-panel-border px-4 py-2">Type</th>
                     <th className="border-b border-r border-panel-border px-4 py-2 text-right">Size</th>
@@ -1656,6 +1567,22 @@ function App() {
               </div>
 
               <div className="flex items-center gap-4">
+                <label className="flex items-center gap-2 text-[10px] font-bold uppercase text-secondary-text" htmlFor="rows-per-page">
+                  Rows
+                  <select
+                    className="h-7 border border-panel-border bg-background-dark px-2 text-[10px] font-bold uppercase text-white outline-none"
+                    id="rows-per-page"
+                    onChange={(event) => {
+                      setPageSize(Number(event.target.value))
+                      setPage(1)
+                    }}
+                    value={pageSize}
+                  >
+                    <option value={10}>10</option>
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                  </select>
+                </label>
                 <button
                   className="transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
                   disabled={currentPage === 1}
