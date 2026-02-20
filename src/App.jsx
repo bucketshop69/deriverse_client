@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useWallet } from '@solana/wallet-adapter-react'
+import { useWalletModal } from '@solana/wallet-adapter-react-ui'
+import DepositModal from './components/DepositModal'
 import {
   createDashboardMockData,
   createDashboardSnapshot,
@@ -334,6 +337,8 @@ function DeriverseLogo({ className = '' }) {
 }
 
 function App() {
+  const { connected, connecting, disconnect, publicKey } = useWallet()
+  const { setVisible: setWalletModalVisible } = useWalletModal()
   const baseDashboard = useMemo(
     () => createDashboardMockData({ year: 2023, monthIndex: 9, totalTrades: 142, seed: 20231114 }),
     [],
@@ -352,6 +357,7 @@ function App() {
   const [heatmapHover, setHeatmapHover] = useState(null)
   const [impactHover, setImpactHover] = useState(null)
   const [impactActiveOnly, setImpactActiveOnly] = useState(false)
+  const [isDepositModalOpen, setIsDepositModalOpen] = useState(false)
   const [annotationMap, setAnnotationMap] = useState(() => {
     if (typeof window === 'undefined') {
       return {}
@@ -568,6 +574,7 @@ function App() {
       ].join('\n'),
     [],
   )
+  const walletAddressLabel = publicKey ? `${publicKey.toBase58().slice(0, 4)}...${publicKey.toBase58().slice(-4)}` : ''
   const chatgptPrefillUrl = useMemo(() => `https://chatgpt.com/?q=${encodeURIComponent(aiDocsPrompt)}`, [aiDocsPrompt])
   const claudePrefillUrl = useMemo(() => `https://claude.ai/new?q=${encodeURIComponent(aiDocsPrompt)}`, [aiDocsPrompt])
 
@@ -577,6 +584,26 @@ function App() {
     }
 
     return formatter(currentValue - previousValue)
+  }
+
+  function handleWalletConnectClick() {
+    setWalletModalVisible(true)
+  }
+
+  function handleOpenDepositModal() {
+    if (!connected) {
+      return
+    }
+
+    setIsDepositModalOpen(true)
+  }
+
+  async function handleWalletDisconnectClick() {
+    try {
+      await disconnect()
+    } catch (error) {
+      console.error('Failed to disconnect wallet', error)
+    }
   }
 
   const statsRows = [
@@ -1070,6 +1097,13 @@ function App() {
 
   return (
     <div className="min-h-screen bg-background-dark text-white antialiased">
+      <DepositModal
+        accountBalance={accountScopeSummary.walletBalance}
+        connected={connected}
+        isOpen={isDepositModalOpen}
+        onClose={() => setIsDepositModalOpen(false)}
+        publicKey={publicKey}
+      />
       <div className="flex min-h-screen w-full flex-col lg:mx-auto lg:max-w-[83.333333%]">
         <header className="sticky top-0 z-50 flex h-12 items-center justify-between border-b border-panel-border bg-background-dark px-4">
           <div className="flex items-center gap-6">
@@ -1079,14 +1113,40 @@ function App() {
             </div>
           </div>
 
-          <div className="flex items-center">
-            <div className="flex size-8 items-center justify-center overflow-hidden rounded-full border border-panel-border bg-neutral-dark">
-              <img
-                alt="User avatar"
-                className="size-full object-cover"
-                src="https://api.dicebear.com/9.x/thumbs/svg?seed=deriverse"
-              />
-            </div>
+          <div className="flex items-center gap-2">
+            <button
+              className={`h-8 border px-3 text-[10px] font-bold uppercase tracking-wide ${
+                connected
+                  ? 'border-panel-border bg-neutral-dark/50 text-white hover:border-secondary-text'
+                  : 'cursor-not-allowed border-panel-border/60 bg-neutral-dark/20 text-secondary-text/70'
+              }`}
+              disabled={!connected}
+              onClick={handleOpenDepositModal}
+              title={!connected ? 'Connect wallet to deposit' : 'Deposit funds'}
+              type="button"
+            >
+              Deposit
+            </button>
+            <button
+              className={`h-8 border px-3 text-[10px] font-bold uppercase tracking-wide ${
+                connected
+                  ? 'border-success/40 bg-success/10 text-success hover:border-success'
+                  : 'border-panel-border bg-neutral-dark/50 text-white hover:border-secondary-text'
+              }`}
+              onClick={handleWalletConnectClick}
+              type="button"
+            >
+              {connecting ? 'Connecting...' : connected ? walletAddressLabel : 'Connect Wallet'}
+            </button>
+            {connected && (
+              <button
+                className="h-8 border border-panel-border bg-background-dark px-2 text-[10px] font-bold uppercase tracking-wide text-secondary-text hover:text-white"
+                onClick={handleWalletDisconnectClick}
+                type="button"
+              >
+                Disconnect
+              </button>
+            )}
           </div>
         </header>
 
@@ -1844,6 +1904,25 @@ function App() {
 
             <div className="mt-auto flex items-center justify-between border-t border-panel-border bg-neutral-dark/5 px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-secondary-text">
               <div className="flex items-center gap-4">
+                <a
+                  aria-label="Deriverse on X"
+                  className="inline-flex items-center text-secondary-text transition-colors hover:text-white"
+                  href="https://x.com/deriverse_io"
+                  rel="noopener noreferrer"
+                  target="_blank"
+                >
+                  <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M18.244 2H21.5l-7.11 8.126L22.75 22h-6.54l-5.12-6.692L5.23 22H1.97l7.606-8.696L1.5 2h6.706l4.628 6.104L18.244 2Zm-1.142 18h1.804L7.23 3.894H5.294L17.102 20Z" />
+                  </svg>
+                </a>
+                <a
+                  className="text-[9px] text-secondary-text transition-colors hover:text-white"
+                  href="https://deriverse.gitbook.io/deriverse-v1"
+                  rel="noopener noreferrer"
+                  target="_blank"
+                >
+                  Docs
+                </a>
                 <span>
                   Showing {visibleStart}-{visibleEnd} of {activeRows.length} {activeRowsLabel}
                 </span>
